@@ -49,8 +49,10 @@ def _expand_path(path: str) -> str:
 def load_config(path: str | None) -> GatewayConfig:
     raw: dict[str, Any] = {}
     if path:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+        config_path = Path(os.path.expandvars(os.path.expanduser(path)))
+        if config_path.exists():
+            with config_path.open("r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
 
     telegram_raw = raw.get("telegram") or {}
     token = _env_or_value(telegram_raw.get("botToken") or telegram_raw.get("bot_token") or os.environ.get("TELEGRAM_BOT_TOKEN", ""))
