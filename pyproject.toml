@@ -1,0 +1,17 @@
+[project]
+name = "pi-gateway"
+version = "0.1.0"
+description = "Telegram gateway for controlling persistent Pi coding-agent sessions over RPC"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "python-telegram-bot>=21.0,<23.0",
+  "PyYAML>=6.0.1,<7.0",
+]
+
+[project.scripts]
+pi-gateway = "pi_gateway.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

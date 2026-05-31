@@ -1,0 +1,16 @@
+[Unit]
+Description=Pi Telegram Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+WorkingDirectory=/home/agent/pi-gateway
+Environment=TELEGRAM_BOT_TOKEN=replace-me
+ExecStart=/home/agent/pi-gateway/.venv/bin/pi-gateway run --config /home/agent/pi-gateway/config.yaml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

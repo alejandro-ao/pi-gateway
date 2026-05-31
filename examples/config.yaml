@@ -1,0 +1,21 @@
+databasePath: ~/.local/share/pi-gateway/pi-gateway.sqlite3
+logLevel: INFO
+
+telegram:
+  # Prefer env var in production:
+  botToken: env:TELEGRAM_BOT_TOKEN
+  allowedUserIds:
+    - 123456789
+  allowGroups: false
+  includeUserInGroupSessionKey: false
+
+pi:
+  command: pi
+  # All Pi sessions will be created/resumed from this directory.
+  cwd: ~/pi-workspace
+  # Optional. Leave unset to use Pi's default ~/.pi/agent/sessions.
+  # sessionDir: ~/.pi/agent/sessions
+  # defaultModel: anthropic/claude-sonnet-4-5
+  # defaultThinking: medium
+  idleTtlSeconds: 1800
+  extraArgs: []
