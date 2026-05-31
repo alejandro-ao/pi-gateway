@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import signal
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -67,21 +68,59 @@ def write_raw_config(path: Path, data: dict[str, Any]) -> None:
         yaml.safe_dump(data, f, sort_keys=False)
 
 
+def _prompt(message: str, *, default: str | None = None) -> str:
+    suffix = f" [{default}]" if default else ""
+    value = input(f"{message}{suffix}: ").strip()
+    return value or (default or "")
+
+
+def _prompt_int(message: str, *, default: int | None = None, required: bool = False) -> int | None:
+    while True:
+        value = _prompt(message, default=str(default) if default is not None else None)
+        if not value and not required:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            print("Please enter a numeric Telegram user id.")
+
+
 def configure_telegram(args: argparse.Namespace) -> None:
     path = expand_path(args.config or DEFAULT_CONFIG_PATH)
     data = load_raw_config(path)
+    interactive = sys.stdin.isatty()
 
     data.setdefault("databasePath", "~/.local/share/pi-gateway/pi-gateway.sqlite3")
     data.setdefault("logLevel", "INFO")
 
     telegram = data.setdefault("telegram", {})
+    existing_token = telegram.get("botToken")
     if args.bot_token:
         telegram["botToken"] = args.bot_token
+    elif interactive:
+        print("Telegram setup")
+        print("- Create a bot with @BotFather and paste its token here.")
+        print("- Leave blank to read the token from TELEGRAM_BOT_TOKEN at runtime.")
+        token_default = existing_token if existing_token and str(existing_token).startswith("env:") else None
+        token = _prompt("Telegram bot token", default=token_default)
+        telegram["botToken"] = token or existing_token or "env:TELEGRAM_BOT_TOKEN"
     else:
         telegram.setdefault("botToken", "env:TELEGRAM_BOT_TOKEN")
 
+    existing_ids = telegram.get("allowedUserIds") or []
+    existing_id = int(existing_ids[0]) if existing_ids else None
     if args.allowed_user_id is not None:
-        telegram["allowedUserIds"] = [int(args.allowed_user_id)]
+        allowed_user_id = int(args.allowed_user_id)
+    elif interactive:
+        print("\nSecurity setup")
+        print("Only this Telegram user id will be allowed to use the bot.")
+        print("Tip: message @userinfobot or @RawDataBot on Telegram to find your numeric user id.")
+        allowed_user_id = _prompt_int("Allowed Telegram user id", default=existing_id, required=existing_id is None)
+    else:
+        allowed_user_id = existing_id
+
+    if allowed_user_id is not None:
+        telegram["allowedUserIds"] = [allowed_user_id]
     else:
         telegram.setdefault("allowedUserIds", [])
 
@@ -90,18 +129,25 @@ def configure_telegram(args: argparse.Namespace) -> None:
 
     pi = data.setdefault("pi", {})
     pi.setdefault("command", "pi")
-    pi["cwd"] = str(expand_path(args.pi_cwd)) if args.pi_cwd else pi.get("cwd", str(Path.cwd()))
+    existing_cwd = str(pi.get("cwd") or Path.cwd())
+    if args.pi_cwd:
+        pi["cwd"] = str(expand_path(args.pi_cwd))
+    elif interactive:
+        print("\nPi setup")
+        pi["cwd"] = str(expand_path(_prompt("Directory where Pi should run sessions", default=existing_cwd)))
+    else:
+        pi["cwd"] = existing_cwd
     pi.setdefault("idleTtlSeconds", 1800)
     pi.setdefault("extraArgs", [])
 
     write_raw_config(path, data)
-    print(f"Wrote config: {path}")
-    if not args.bot_token:
+    print(f"\nWrote config: {path}")
+    if str(telegram.get("botToken", "")).startswith("env:"):
         print("Telegram token is configured as env:TELEGRAM_BOT_TOKEN; set that environment variable when running the daemon.")
-    if args.allowed_user_id is None:
-        print("WARNING: no --allowed-user-id was provided. Set one before exposing the bot.")
+    if allowed_user_id is None:
+        print("WARNING: no allowed Telegram user id was configured. Set one before exposing the bot.")
     else:
-        print(f"Only Telegram user id {args.allowed_user_id} is allowed.")
+        print(f"Only Telegram user id {allowed_user_id} is allowed.")
 
 
 def show_config_path(args: argparse.Namespace) -> None:

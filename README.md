@@ -23,7 +23,15 @@ Pi must already be installed and authenticated on the machine as the same user t
 
 ## Configure Telegram
 
-Create/update the default config at `~/.config/pi-gateway/config.yaml`:
+Create/update the default config at `~/.config/pi-gateway/config.yaml` interactively:
+
+```bash
+pi-gateway configure telegram
+```
+
+It will ask for your BotFather token, your allowed Telegram user id, and the Pi working directory.
+
+You can also configure non-interactively:
 
 ```bash
 pi-gateway configure telegram \
@@ -31,7 +39,7 @@ pi-gateway configure telegram \
   --pi-cwd /home/agent/pi-workspace
 ```
 
-By default the bot token is read from `TELEGRAM_BOT_TOKEN`. You can also write it into the config:
+By default the bot token can be read from `TELEGRAM_BOT_TOKEN`. You can also write it into the config:
 
 ```bash
 pi-gateway configure telegram \
