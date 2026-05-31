@@ -134,7 +134,10 @@ def configure_telegram(args: argparse.Namespace) -> None:
         pi["cwd"] = str(expand_path(args.pi_cwd))
     elif interactive:
         print("\nPi setup")
-        pi["cwd"] = str(expand_path(_prompt("Directory where Pi should run sessions", default=existing_cwd)))
+        current_cwd = str(Path.cwd())
+        if existing_cwd != current_cwd:
+            print(f"Existing configured Pi directory: {existing_cwd}")
+        pi["cwd"] = str(expand_path(_prompt("Directory where Pi should run sessions", default=current_cwd)))
     else:
         pi["cwd"] = existing_cwd
     pi.setdefault("idleTtlSeconds", 1800)
