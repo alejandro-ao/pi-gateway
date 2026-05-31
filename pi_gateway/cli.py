@@ -166,8 +166,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("-c", "--config", help=argparse.SUPPRESS)
 
     configure = sub.add_parser("configure", help="Configure gateway integrations")
+    configure.set_defaults(_help_parser=configure)
     configure_sub = configure.add_subparsers(dest="configure_command")
     telegram = configure_sub.add_parser("telegram", help="Create/update Telegram gateway config")
+    telegram.set_defaults(_help_parser=telegram)
     telegram.add_argument("--bot-token", help="Telegram bot token. Omit to use env:TELEGRAM_BOT_TOKEN")
     telegram.add_argument("--allowed-user-id", type=int, help="Only accept messages from this Telegram user id")
     telegram.add_argument("--pi-cwd", help="Working directory where Pi should run sessions")
@@ -191,6 +193,8 @@ def main() -> None:
         configure_telegram(args)
     elif args.command == "config-path":
         show_config_path(args)
+    elif hasattr(args, "_help_parser"):
+        args._help_parser.print_help()
     else:
         parser.print_help()
 
