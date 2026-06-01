@@ -4,6 +4,10 @@ Telegram gateway for persistent [Pi](https://pi.dev) coding-agent sessions.
 
 The gateway is a long-running process. Telegram conversations are mapped to Pi JSONL session files in SQLite, while Pi remains the source of truth for agent history.
 
+## Documentation
+
+See [`docs/`](docs/README.md) for architecture, startup flow, Telegram gateway internals, Pi RPC integration, session mapping, deployment, and troubleshooting notes.
+
 ## Install with uv
 
 From a checkout:
