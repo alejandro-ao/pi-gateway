@@ -158,6 +158,47 @@ systemd mode:
 journalctl -u pi-gateway -f
 ```
 
+## Telegram Conflict: only one bot instance can poll
+
+Error:
+
+```text
+telegram.error.Conflict: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+```
+
+Meaning: two processes are using the same Telegram bot token with polling. Telegram allows only one active `getUpdates` poller per bot token.
+
+Common causes:
+
+- You ran `pi-gateway run` while `pi-gateway start` was already running.
+- You have both a background `pi-gateway start` process and a systemd service.
+- An old process is still alive after a deploy/reinstall.
+- The same bot token is running on another machine.
+
+Debug:
+
+```bash
+pi-gateway status
+ps aux | grep '[p]i-gateway'
+systemctl status pi-gateway  # if using systemd
+```
+
+Fix one of them:
+
+```bash
+pi-gateway stop
+# or, if using systemd:
+sudo systemctl stop pi-gateway
+```
+
+Then start exactly one instance:
+
+```bash
+pi-gateway start
+# or systemd, but not both
+sudo systemctl start pi-gateway
+```
+
 ## Telegram Lifecycle Message Not Sent
 
 Startup/shutdown messages are sent only to configured `allowedUserIds`.

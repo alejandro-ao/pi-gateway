@@ -272,7 +272,10 @@ def show_logs(args: argparse.Namespace) -> None:
     if args.follow:
         cmd.append("-f")
     cmd.append(str(path))
-    subprocess.run(cmd, check=False)
+    try:
+        subprocess.run(cmd, check=False)
+    except KeyboardInterrupt:
+        print()
 
 
 def build_parser() -> argparse.ArgumentParser:
