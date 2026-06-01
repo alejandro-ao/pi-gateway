@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
+import hashlib
 import logging
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,28 @@ DEFAULT_CONFIG_PATH = "~/.config/pi-gateway/config.yaml"
 DEFAULT_STATE_DIR = "~/.local/state/pi-gateway"
 DEFAULT_PID_PATH = f"{DEFAULT_STATE_DIR}/pi-gateway.pid"
 DEFAULT_LOG_PATH = f"{DEFAULT_STATE_DIR}/pi-gateway.log"
+_HELD_LOCK_FILES: list[Any] = []
+
+
+def acquire_bot_token_lock(bot_token: str) -> None:
+    token_hash = hashlib.sha256(bot_token.encode("utf-8")).hexdigest()[:16]
+    path = Path(tempfile.gettempdir()) / f"pi-gateway-telegram-{token_hash}.lock"
+    lock_file = path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.seek(0)
+        existing = lock_file.read().strip() or "unknown"
+        lock_file.close()
+        raise SystemExit(
+            "Another pi-gateway process is already running with this Telegram bot token "
+            f"(lock: {path}, pid: {existing}). Stop it before starting another instance."
+        )
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(str(os.getpid()))
+    lock_file.flush()
+    _HELD_LOCK_FILES.append(lock_file)
 
 
 async def run_gateway(config_path: str | None) -> None:
@@ -32,6 +57,7 @@ async def run_gateway(config_path: str | None) -> None:
     )
     if not config.telegram:
         raise SystemExit("Telegram is not configured. Run `pi-gateway configure telegram` or set TELEGRAM_BOT_TOKEN.")
+    acquire_bot_token_lock(config.telegram.bot_token)
 
     db = GatewayDB(config.database_path)
     await db.init()

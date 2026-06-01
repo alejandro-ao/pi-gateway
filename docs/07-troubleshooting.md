@@ -168,6 +168,10 @@ telegram.error.Conflict: Conflict: terminated by other getUpdates request; make 
 
 Meaning: two processes are using the same Telegram bot token with polling. Telegram allows only one active `getUpdates` poller per bot token.
 
+Pi Gateway now tries to catch this at startup with a local lock file based on a hash of the bot token. If it detects another local gateway process with the same token, startup fails with a clear error before Telegram polling starts.
+
+The Telegram `Conflict` error can still happen if the duplicate process is on another machine, another OS user with a separate temp directory, or a non-Pi-Gateway program using the same bot token.
+
 Common causes:
 
 - You ran `pi-gateway run` while `pi-gateway start` was already running.
