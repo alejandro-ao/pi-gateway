@@ -48,12 +48,16 @@ async def run_gateway(config_path: str | None) -> None:
             pass
 
     await telegram.start()
+    await telegram.notify_lifecycle("🟢 Pi gateway connected.")
     try:
         await stop_event.wait()
     finally:
-        await telegram.stop()
-        await sessions.stop()
-        await db.close()
+        try:
+            await telegram.notify_lifecycle("🔴 Pi gateway disconnected.")
+        finally:
+            await telegram.stop()
+            await sessions.stop()
+            await db.close()
 
 
 def expand_path(path: str) -> Path:

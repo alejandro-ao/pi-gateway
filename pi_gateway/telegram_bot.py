@@ -101,6 +101,15 @@ class TelegramGateway:
         await self.app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         log.info("telegram gateway started")
 
+    async def notify_lifecycle(self, text: str) -> None:
+        if not self.telegram.allowed_user_ids:
+            return
+        for user_id in self.telegram.allowed_user_ids:
+            try:
+                await self.app.bot.send_message(chat_id=user_id, text=text)
+            except Exception:
+                log.exception("failed to send lifecycle notification to telegram user %s", user_id)
+
     async def stop(self) -> None:
         if self.app.updater.running:
             await self.app.updater.stop()
