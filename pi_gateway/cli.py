@@ -5,7 +5,9 @@ import asyncio
 import logging
 import os
 import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,9 @@ from .session_manager import PiSessionManager
 from .telegram_bot import TelegramGateway
 
 DEFAULT_CONFIG_PATH = "~/.config/pi-gateway/config.yaml"
+DEFAULT_STATE_DIR = "~/.local/state/pi-gateway"
+DEFAULT_PID_PATH = f"{DEFAULT_STATE_DIR}/pi-gateway.pid"
+DEFAULT_LOG_PATH = f"{DEFAULT_STATE_DIR}/pi-gateway.log"
 
 
 async def run_gateway(config_path: str | None) -> None:
@@ -157,13 +162,134 @@ def show_config_path(args: argparse.Namespace) -> None:
     print(expand_path(args.config or DEFAULT_CONFIG_PATH))
 
 
+def pid_path() -> Path:
+    return expand_path(DEFAULT_PID_PATH)
+
+
+def log_path() -> Path:
+    return expand_path(DEFAULT_LOG_PATH)
+
+
+def is_process_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def read_pid() -> int | None:
+    path = pid_path()
+    if not path.exists():
+        return None
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except ValueError:
+        return None
+
+
+def start_background(args: argparse.Namespace) -> None:
+    existing = read_pid()
+    if existing and is_process_running(existing):
+        print(f"pi-gateway is already running with PID {existing}")
+        print(f"Log: {log_path()}")
+        return
+
+    pid_file = pid_path()
+    log_file = log_path()
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [sys.argv[0], "run"]
+    if args.config:
+        cmd += ["--config", args.config]
+
+    with log_file.open("ab", buffering=0) as out:
+        out.write(f"\n--- starting pi-gateway at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode())
+        process = subprocess.Popen(
+            cmd,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+    pid_file.write_text(str(process.pid), encoding="utf-8")
+    print(f"Started pi-gateway in the background with PID {process.pid}")
+    print(f"Log: {log_file}")
+    print("Stop with: pi-gateway stop")
+    print("Follow logs with: pi-gateway logs")
+
+
+def stop_background(args: argparse.Namespace) -> None:
+    pid = read_pid()
+    if not pid:
+        print("pi-gateway is not running (no PID file found)")
+        return
+    if not is_process_running(pid):
+        pid_path().unlink(missing_ok=True)
+        print(f"pi-gateway is not running (stale PID {pid} removed)")
+        return
+
+    os.kill(pid, signal.SIGTERM)
+    timeout = float(args.timeout)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not is_process_running(pid):
+            pid_path().unlink(missing_ok=True)
+            print(f"Stopped pi-gateway PID {pid}")
+            return
+        time.sleep(0.2)
+
+    print(f"pi-gateway PID {pid} did not stop within {timeout:g}s")
+    print("Use kill manually if needed.")
+
+
+def status_background(args: argparse.Namespace) -> None:
+    pid = read_pid()
+    if pid and is_process_running(pid):
+        print(f"pi-gateway is running with PID {pid}")
+    elif pid:
+        print(f"pi-gateway is not running (stale PID {pid})")
+    else:
+        print("pi-gateway is not running")
+    print(f"Log: {log_path()}")
+
+
+def show_logs(args: argparse.Namespace) -> None:
+    path = log_path()
+    if not path.exists():
+        print(f"Log file does not exist yet: {path}")
+        return
+    cmd = ["tail", "-n", str(args.lines)]
+    if args.follow:
+        cmd.append("-f")
+    cmd.append(str(path))
+    subprocess.run(cmd, check=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pi-gateway")
     parser.add_argument("-c", "--config", help=f"Path to config YAML (default: {DEFAULT_CONFIG_PATH})")
     sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="Run the Telegram gateway daemon")
+    run = sub.add_parser("run", help="Run the Telegram gateway daemon in the foreground")
     run.add_argument("-c", "--config", help=argparse.SUPPRESS)
+
+    start = sub.add_parser("start", help="Start pi-gateway in the background")
+    start.add_argument("-c", "--config", help=argparse.SUPPRESS)
+
+    stop = sub.add_parser("stop", help="Stop a background pi-gateway process")
+    stop.add_argument("--timeout", type=float, default=10, help="Seconds to wait for graceful shutdown")
+
+    sub.add_parser("status", help="Show background process status")
+
+    logs = sub.add_parser("logs", help="Show pi-gateway log file")
+    logs.add_argument("-n", "--lines", type=int, default=80, help="Number of lines to show")
+    logs.add_argument("-f", "--follow", action="store_true", help="Follow log output")
 
     configure = sub.add_parser("configure", help="Configure gateway integrations")
     configure.set_defaults(_help_parser=configure)
@@ -189,6 +315,14 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "run":
         asyncio.run(run_gateway(args.config))
+    elif args.command == "start":
+        start_background(args)
+    elif args.command == "stop":
+        stop_background(args)
+    elif args.command == "status":
+        status_background(args)
+    elif args.command == "logs":
+        show_logs(args)
     elif args.command == "configure" and args.configure_command == "telegram":
         configure_telegram(args)
     elif args.command == "config-path":

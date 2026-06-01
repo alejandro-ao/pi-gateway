@@ -60,16 +60,32 @@ You can still maintain config manually; see `examples/config.yaml`.
 
 ## Run
 
-With default config:
+Foreground mode, useful for debugging or systemd:
 
 ```bash
 export TELEGRAM_BOT_TOKEN=123:abc
 pi-gateway run
 ```
 
+Background mode, useful for a simple VPS setup without systemd:
+
+```bash
+pi-gateway start
+pi-gateway status
+pi-gateway logs -f
+pi-gateway stop
+```
+
+`start` writes logs to:
+
+```text
+~/.local/state/pi-gateway/pi-gateway.log
+```
+
 With an explicit config:
 
 ```bash
+pi-gateway -c config.yaml start
 pi-gateway -c config.yaml run
 # or
 pi-gateway run -c config.yaml
