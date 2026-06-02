@@ -153,9 +153,11 @@ persist get_state() into SQLite
 
 ## Important Edge Cases
 
-### Process exits
+### Process exits and reader failures
 
 If the child Pi process exits, `_read_stdout()` fails pending requests with `PiRpcError`.
+
+If stdout reading itself fails (for example `LimitOverrunError`/`ValueError` from an oversized line), the client is marked unhealthy, pending requests and event consumers receive `PiRpcError`, and the child process is terminated. The cached client keeps the last known `sessionFile`; on the next gateway operation `PiRpcClient.start()` restarts `pi --mode rpc --session <session-file>` automatically instead of leaving the gateway permanently stuck.
 
 ### Concurrent Telegram messages
 

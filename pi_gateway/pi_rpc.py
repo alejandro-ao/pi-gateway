@@ -13,6 +13,14 @@ from .config import PiConfig
 
 log = logging.getLogger(__name__)
 
+# Pi can emit large JSONL events (for example exports, tool output, or large
+# assistant messages). asyncio's subprocess default StreamReader limit is only
+# 64 KiB, which can make readline() raise LimitOverrunError/ValueError and kill
+# the reader task. Use a larger limit, and still treat any reader crash as a
+# broken client so the session manager can replace it on the next operation.
+RPC_STREAM_LIMIT = 16 * 1024 * 1024
+RPC_ERROR_EVENT = "_pi_rpc_error"
+
 
 class PiRpcError(RuntimeError):
     pass
@@ -55,11 +63,44 @@ class PiRpcClient:
         self._stderr_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
         self._closed = False
+        self._broken_error: PiRpcError | None = None
         self.last_used = monotonic()
 
+    def healthy(self) -> bool:
+        return (
+            not self._closed
+            and self.process is not None
+            and self.process.returncode is None
+            and self._reader_task is not None
+            and not self._reader_task.done()
+            and self._broken_error is None
+        )
+
+    def apply_state(self, state: dict[str, Any]) -> None:
+        session_file = state.get("sessionFile")
+        if session_file:
+            self.session_file = session_file
+        session_name = state.get("sessionName")
+        if session_name:
+            self.name = session_name
+
+    def _clear_events(self) -> None:
+        while True:
+            try:
+                self._events.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+
     async def start(self) -> None:
-        if self.process and self.process.returncode is None:
+        if self.healthy():
             return
+        if self._closed:
+            raise PiRpcError("pi rpc client is closed")
+        if self.process and self.process.returncode is None:
+            log.warning("restarting unhealthy pi rpc subprocess")
+            await self._terminate_process()
+        self._clear_events()
+        self._broken_error = None
         args = [self.config.command, "--mode", "rpc"]
         if self.config.session_dir:
             args += ["--session-dir", self.config.session_dir]
@@ -82,6 +123,7 @@ class PiRpcClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=RPC_STREAM_LIMIT,
         )
         self._reader_task = asyncio.create_task(self._read_stdout(), name="pi-rpc-stdout")
         self._stderr_task = asyncio.create_task(self._read_stderr(), name="pi-rpc-stderr")
@@ -107,14 +149,19 @@ class PiRpcClient:
                     await self._events.put(payload)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            log.exception("pi rpc stdout reader crashed")
+        except Exception as e:
+            log.exception("pi rpc stdout reader crashed; pi rpc client is unhealthy and will be restarted on next use")
+            self._broken_error = PiRpcError(f"pi rpc stdout reader crashed: {e}")
         finally:
-            err = PiRpcError("pi rpc process exited")
+            err = self._broken_error or PiRpcError("pi rpc process exited")
+            self._broken_error = err
             for fut in self._pending.values():
                 if not fut.done():
                     fut.set_exception(err)
             self._pending.clear()
+            await self._events.put({"type": RPC_ERROR_EVENT, "error": str(err)})
+            if self.process and self.process.returncode is None:
+                self.process.terminate()
 
     async def _read_stderr(self) -> None:
         assert self.process and self.process.stderr
@@ -131,6 +178,8 @@ class PiRpcClient:
 
     async def request(self, payload: dict[str, Any], timeout: float | None = 300) -> dict[str, Any]:
         await self.start()
+        if self._broken_error:
+            raise self._broken_error
         if not self.process or not self.process.stdin:
             raise PiRpcError("pi rpc process not started")
         req_id = str(uuid.uuid4())
@@ -138,9 +187,15 @@ class PiRpcClient:
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
         data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
-        async with self._write_lock:
-            self.process.stdin.write(data)
-            await self.process.stdin.drain()
+        try:
+            async with self._write_lock:
+                if self._broken_error:
+                    raise self._broken_error
+                self.process.stdin.write(data)
+                await self.process.stdin.drain()
+        except Exception:
+            self._pending.pop(req_id, None)
+            raise
         self.last_used = monotonic()
         response = await asyncio.wait_for(fut, timeout=timeout)
         if not response.get("success", False):
@@ -150,6 +205,8 @@ class PiRpcClient:
     async def events_until_agent_end(self, timeout: float | None = None) -> AsyncIterator[dict[str, Any]]:
         while True:
             event = await asyncio.wait_for(self._events.get(), timeout=timeout)
+            if event.get("type") == RPC_ERROR_EVENT:
+                raise PiRpcError(str(event.get("error") or "pi rpc client failed"))
             yield event
             if event.get("type") == "agent_end":
                 return
@@ -219,10 +276,7 @@ class PiRpcClient:
         data = (await self.request({"type": "get_available_models"}, timeout=120)).get("data") or {}
         return data.get("models") or []
 
-    async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+    async def _terminate_process(self) -> None:
         if self.process and self.process.returncode is None:
             self.process.terminate()
             try:
@@ -231,5 +285,15 @@ class PiRpcClient:
                 self.process.kill()
                 await self.process.wait()
         for task in (self._reader_task, self._stderr_task):
-            if task:
+            if task and not task.done():
                 task.cancel()
+        await asyncio.gather(
+            *(task for task in (self._reader_task, self._stderr_task) if task),
+            return_exceptions=True,
+        )
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._terminate_process()
