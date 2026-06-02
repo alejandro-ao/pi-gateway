@@ -65,7 +65,7 @@ class PiSessionManager:
         client = PiRpcClient(self.config, session_file=conversation.pi_session_file, name=conversation.pi_session_name)
         await client.start()
         state = await client.get_state()
-        await self._persist_state(conversation.id, state)
+        await self._persist_client_state(conversation.id, client, state)
         self._clients[conversation.id] = client
         return client
 
@@ -77,18 +77,22 @@ class PiSessionManager:
             pi_session_name=state.get("sessionName"),
         )
 
+    async def _persist_client_state(self, conversation_id: int, client: PiRpcClient, state: dict[str, Any]) -> None:
+        client.apply_state(state)
+        await self._persist_state(conversation_id, state)
+
     async def prompt(self, conversation: Conversation, text: str, *, streaming_behavior: str | None = None) -> PromptResult:
         async with self.lock_for(conversation.id):
             client = await self.client_for(conversation)
             result = await client.prompt(text, streaming_behavior=streaming_behavior)
-            await self._persist_state(conversation.id, await client.get_state())
+            await self._persist_client_state(conversation.id, client, await client.get_state())
             return result
 
     async def state(self, conversation: Conversation) -> dict[str, Any]:
         async with self.lock_for(conversation.id):
             client = await self.client_for(conversation)
             state = await client.get_state()
-            await self._persist_state(conversation.id, state)
+            await self._persist_client_state(conversation.id, client, state)
             return state
 
     async def stats(self, conversation: Conversation) -> dict[str, Any]:
@@ -100,14 +104,14 @@ class PiSessionManager:
             client = await self.client_for(conversation)
             data = await client.new_session()
             state = await client.get_state()
-            await self._persist_state(conversation.id, state)
+            await self._persist_client_state(conversation.id, client, state)
             return {"newSession": data, "state": state}
 
     async def compact(self, conversation: Conversation, instructions: str | None = None) -> dict[str, Any]:
         async with self.lock_for(conversation.id):
             client = await self.client_for(conversation)
             data = await client.compact(instructions)
-            await self._persist_state(conversation.id, await client.get_state())
+            await self._persist_client_state(conversation.id, client, await client.get_state())
             return data
 
     async def abort(self, conversation: Conversation) -> None:
@@ -118,13 +122,13 @@ class PiSessionManager:
         async with self.lock_for(conversation.id):
             client = await self.client_for(conversation)
             await client.set_session_name(name)
-            await self._persist_state(conversation.id, await client.get_state())
+            await self._persist_client_state(conversation.id, client, await client.get_state())
 
     async def clone(self, conversation: Conversation) -> dict[str, Any]:
         async with self.lock_for(conversation.id):
             client = await self.client_for(conversation)
             data = await client.clone()
-            await self._persist_state(conversation.id, await client.get_state())
+            await self._persist_client_state(conversation.id, client, await client.get_state())
             return data
 
     async def export_html(self, conversation: Conversation) -> str | None:
@@ -144,7 +148,7 @@ class PiSessionManager:
         async with self.lock_for(conversation.id):
             client = await self.client_for(conversation)
             await client.set_model(provider, model_id)
-            await self._persist_state(conversation.id, await client.get_state())
+            await self._persist_client_state(conversation.id, client, await client.get_state())
 
     async def models(self, conversation: Conversation) -> list[dict[str, Any]]:
         async with self.lock_for(conversation.id):
