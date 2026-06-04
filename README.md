@@ -10,7 +10,27 @@ See [`docs/`](docs/README.md) for architecture, startup flow, Telegram gateway i
 
 ## Install with uv
 
-From a checkout:
+Directly from GitHub (no clone needed):
+
+```bash
+uv tool install git+https://github.com/YOUR_USERNAME/pi-gateway.git
+```
+
+Install a specific tag or branch:
+
+```bash
+uv tool install git+https://github.com/YOUR_USERNAME/pi-gateway.git@v0.1.0
+```
+
+Upgrade later:
+
+```bash
+uv tool install --force git+https://github.com/YOUR_USERNAME/pi-gateway.git
+# or
+uv tool upgrade pi-gateway
+```
+
+From a local checkout:
 
 ```bash
 uv tool install .
