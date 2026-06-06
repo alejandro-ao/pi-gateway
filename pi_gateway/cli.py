@@ -22,6 +22,7 @@ from .config import load_config
 from .db import GatewayDB
 from .session_manager import PiSessionManager
 from .telegram_bot import TelegramGateway
+from .version_check import check_version, format_update_notice
 
 DEFAULT_CONFIG_PATH = "~/.config/pi-gateway/config.yaml"
 DEFAULT_STATE_DIR = "~/.local/state/pi-gateway"
@@ -76,7 +77,11 @@ async def run_gateway(config_path: str | None) -> None:
             pass
 
     await telegram.start()
-    await telegram.notify_lifecycle("🟢 Pi gateway connected.")
+    lifecycle_message = "🟢 Pi gateway connected."
+    update_notice = format_update_notice(await check_version())
+    if update_notice:
+        lifecycle_message += f"\n\n{update_notice}"
+    await telegram.notify_lifecycle(lifecycle_message)
     try:
         await stop_event.wait()
     finally:

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from telegram.ext import ContextTypes
 from .db import Conversation, GatewayDB
 from .session_manager import PiSessionManager
+from .version_check import check_version, format_status_line
 
 log = logging.getLogger(__name__)
 
@@ -288,6 +289,8 @@ class TelegramGateway:
     async def _status(self, update: Update, conv: Conversation) -> None:
         state = await self.sessions.state(conv)
         text = self._state_summary(state)
+        version_status = await check_version()
+        text += f"\n{format_status_line(version_status)}"
         try:
             stats = await self.sessions.stats(conv)
             usage = stats.get("contextUsage") or {}
