@@ -44,6 +44,17 @@ def last_assistant_text_from_messages(messages: list[Any]) -> str:
     return ""
 
 
+def event_without_message_history(event: dict[str, Any]) -> dict[str, Any]:
+    if event.get("type") != "agent_end" or "messages" not in event:
+        return event
+    messages = event.get("messages")
+    sanitized = {key: value for key, value in event.items() if key != "messages"}
+    sanitized["messagesOmitted"] = True
+    if isinstance(messages, list):
+        sanitized["messageCount"] = len(messages)
+    return sanitized
+
+
 @dataclass(slots=True)
 class PromptResult:
     text: str
@@ -218,15 +229,17 @@ class PiRpcClient:
         events: list[dict[str, Any]] = []
         final_text = ""
         async for event in self.events_until_agent_end(timeout=None):
-            events.append(event)
+            events.append(event_without_message_history(event))
             if event.get("type") == "message_end":
                 msg = event.get("message") or {}
                 if isinstance(msg, dict) and msg.get("role") == "assistant":
                     final_text = content_to_text(msg.get("content")) or final_text
-            elif event.get("type") == "agent_end":
-                msgs = event.get("messages") or []
-                if isinstance(msgs, list):
-                    final_text = last_assistant_text_from_messages(msgs) or final_text
+            elif event.get("type") == "agent_end" and not final_text:
+                final_text = str(event.get("finalText") or event.get("final_text") or "")
+                if not final_text:
+                    msgs = event.get("messages") or []
+                    if isinstance(msgs, list):
+                        final_text = last_assistant_text_from_messages(msgs) or final_text
         self.last_used = monotonic()
         return PromptResult(text=final_text, events=events)
 

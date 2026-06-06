@@ -102,7 +102,10 @@ Then it consumes events until `agent_end`.
 The final assistant text is extracted from either:
 
 - the last assistant `message_end`, or
-- the `agent_end.messages` array.
+- `agent_end.finalText` / `agent_end.final_text`, or
+- the `agent_end.messages` array as a compatibility fallback only when no final text was observed earlier.
+
+When `agent_end.messages` is present, `PromptResult.events` omits that message history and records `messagesOmitted`/`messageCount` metadata instead. This prevents gateway callers from retaining a full session snapshot in memory when Telegram only needs the final assistant response.
 
 This avoids requiring token-by-token Telegram streaming for v1.
 
