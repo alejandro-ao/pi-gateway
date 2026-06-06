@@ -135,6 +135,8 @@ await telegram.notify_lifecycle("🔴 Pi gateway disconnected.")
 
 `notify_lifecycle()` sends the message to every configured `allowedUserIds` entry. If no allowlist is configured, no lifecycle message is sent.
 
+Startup notifications include an update notice when PyPI has a newer `pi-gateway` version available. `/status` also includes the installed version and cached update-check result. The check is implemented in `pi_gateway.version_check` so other gateway integrations can reuse it.
+
 This is useful because the Telegram user can see when the agent becomes unavailable.
 
 ## Response Chunking
