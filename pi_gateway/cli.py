@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import fcntl
 import hashlib
+import importlib.metadata
 import logging
 import os
 import signal
@@ -16,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from . import __version__
 from .config import load_config
 from .db import GatewayDB
 from .session_manager import PiSessionManager
@@ -304,8 +306,16 @@ def show_logs(args: argparse.Namespace) -> None:
         print()
 
 
+def package_version() -> str:
+    try:
+        return importlib.metadata.version("pi-gateway")
+    except importlib.metadata.PackageNotFoundError:
+        return __version__
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pi-gateway")
+    parser.add_argument("--version", action="version", version=f"pi-gateway {package_version()}")
     parser.add_argument("-c", "--config", help=f"Path to config YAML (default: {DEFAULT_CONFIG_PATH})")
     sub = parser.add_subparsers(dest="command")
 

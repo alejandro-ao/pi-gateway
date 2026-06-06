@@ -74,6 +74,12 @@ pi-gateway configure telegram \
 
 Security note: `--allowed-user-id` writes a single allowlisted Telegram user id. Messages from other users are ignored. Group chats are disabled unless you pass `--allow-groups`.
 
+Print the installed version:
+
+```bash
+pi-gateway --version
+```
+
 Print the default config path:
 
 ```bash
