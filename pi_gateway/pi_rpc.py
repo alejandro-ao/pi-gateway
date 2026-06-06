@@ -16,9 +16,8 @@ log = logging.getLogger(__name__)
 # Pi can emit large JSONL events (for example exports, tool output, or large
 # assistant messages). asyncio's subprocess default StreamReader limit is only
 # 64 KiB, which can make readline() raise LimitOverrunError/ValueError and kill
-# the reader task. Use a larger limit, and still treat any reader crash as a
-# broken client so the session manager can replace it on the next operation.
-RPC_STREAM_LIMIT = 16 * 1024 * 1024
+# the reader task. PiConfig.rpc_stream_limit uses a larger default and can be
+# raised for deployments that expect unusually large RPC frames.
 RPC_ERROR_EVENT = "_pi_rpc_error"
 
 
@@ -43,6 +42,17 @@ def last_assistant_text_from_messages(messages: list[Any]) -> str:
         if isinstance(message, dict) and message.get("role") == "assistant":
             return content_to_text(message.get("content"))
     return ""
+
+
+def event_without_message_history(event: dict[str, Any]) -> dict[str, Any]:
+    if event.get("type") != "agent_end" or "messages" not in event:
+        return event
+    messages = event.get("messages")
+    sanitized = {key: value for key, value in event.items() if key != "messages"}
+    sanitized["messagesOmitted"] = True
+    if isinstance(messages, list):
+        sanitized["messageCount"] = len(messages)
+    return sanitized
 
 
 @dataclass(slots=True)
@@ -123,7 +133,7 @@ class PiRpcClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            limit=RPC_STREAM_LIMIT,
+            limit=self.config.rpc_stream_limit,
         )
         self._reader_task = asyncio.create_task(self._read_stdout(), name="pi-rpc-stdout")
         self._stderr_task = asyncio.create_task(self._read_stderr(), name="pi-rpc-stderr")
@@ -219,15 +229,17 @@ class PiRpcClient:
         events: list[dict[str, Any]] = []
         final_text = ""
         async for event in self.events_until_agent_end(timeout=None):
-            events.append(event)
+            events.append(event_without_message_history(event))
             if event.get("type") == "message_end":
                 msg = event.get("message") or {}
                 if isinstance(msg, dict) and msg.get("role") == "assistant":
                     final_text = content_to_text(msg.get("content")) or final_text
-            elif event.get("type") == "agent_end":
-                msgs = event.get("messages") or []
-                if isinstance(msgs, list):
-                    final_text = last_assistant_text_from_messages(msgs) or final_text
+            elif event.get("type") == "agent_end" and not final_text:
+                final_text = str(event.get("finalText") or event.get("final_text") or "")
+                if not final_text:
+                    msgs = event.get("messages") or []
+                    if isinstance(msgs, list):
+                        final_text = last_assistant_text_from_messages(msgs) or final_text
         self.last_used = monotonic()
         return PromptResult(text=final_text, events=events)
 
