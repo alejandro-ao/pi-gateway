@@ -47,6 +47,13 @@ def _expand_path(path: str) -> str:
     return str(Path(os.path.expandvars(os.path.expanduser(path))).resolve())
 
 
+def _positive_int(value: Any, name: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
 def load_config(path: str | None) -> GatewayConfig:
     raw: dict[str, Any] = {}
     if path:
@@ -78,11 +85,12 @@ def load_config(path: str | None) -> GatewayConfig:
         default_thinking=pi_raw.get("defaultThinking") or pi_raw.get("default_thinking"),
         extra_args=[str(x) for x in pi_raw.get("extraArgs", pi_raw.get("extra_args", []))],
         idle_ttl_seconds=int(pi_raw.get("idleTtlSeconds", pi_raw.get("idle_ttl_seconds", 30 * 60))),
-        rpc_stream_limit=int(
+        rpc_stream_limit=_positive_int(
             pi_raw.get(
                 "rpcStreamLimit",
                 pi_raw.get("rpc_stream_limit", os.environ.get("PI_GATEWAY_RPC_STREAM_LIMIT", 16 * 1024 * 1024)),
-            )
+            ),
+            "pi.rpcStreamLimit",
         ),
     )
 
