@@ -16,9 +16,8 @@ log = logging.getLogger(__name__)
 # Pi can emit large JSONL events (for example exports, tool output, or large
 # assistant messages). asyncio's subprocess default StreamReader limit is only
 # 64 KiB, which can make readline() raise LimitOverrunError/ValueError and kill
-# the reader task. Use a larger limit, and still treat any reader crash as a
-# broken client so the session manager can replace it on the next operation.
-RPC_STREAM_LIMIT = 16 * 1024 * 1024
+# the reader task. PiConfig.rpc_stream_limit uses a larger default and can be
+# raised for deployments that expect unusually large RPC frames.
 RPC_ERROR_EVENT = "_pi_rpc_error"
 
 
@@ -123,7 +122,7 @@ class PiRpcClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            limit=RPC_STREAM_LIMIT,
+            limit=self.config.rpc_stream_limit,
         )
         self._reader_task = asyncio.create_task(self._read_stdout(), name="pi-rpc-stdout")
         self._stderr_task = asyncio.create_task(self._read_stderr(), name="pi-rpc-stderr")

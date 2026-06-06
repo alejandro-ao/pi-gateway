@@ -18,4 +18,7 @@ pi:
   # defaultModel: anthropic/claude-sonnet-4-5
   # defaultThinking: medium
   idleTtlSeconds: 1800
+  # Maximum bytes for one stdout/stderr RPC frame from Pi. Can also be set
+  # with PI_GATEWAY_RPC_STREAM_LIMIT.
+  rpcStreamLimit: 16777216
   extraArgs: []

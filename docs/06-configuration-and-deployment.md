@@ -88,8 +88,11 @@ pi:
   command: pi
   cwd: /home/agent/pi-workspace
   idleTtlSeconds: 1800
+  rpcStreamLimit: 16777216
   extraArgs: []
 ```
+
+`rpcStreamLimit` controls the maximum bytes asyncio will buffer for one Pi RPC stdout/stderr frame. It defaults to 16 MiB and can also be set with `PI_GATEWAY_RPC_STREAM_LIMIT`.
 
 ## Pi Working Directory
 
