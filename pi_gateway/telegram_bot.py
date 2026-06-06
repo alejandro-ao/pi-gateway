@@ -261,13 +261,15 @@ class TelegramGateway:
     async def _send_to_pi(self, update: Update, conv: Conversation, text: str, *, streaming_behavior: str | None = None) -> None:
         await self._typing(update)
         working = await update.effective_message.reply_text("⏳ Pi is working...")
-        result = await self.sessions.prompt(conv, text, streaming_behavior=streaming_behavior)
+        try:
+            result = await self.sessions.prompt(conv, text, streaming_behavior=streaming_behavior)
+        finally:
+            try:
+                await working.delete()
+            except Exception:
+                pass
         await self.db.touch_message(conv.id)
         await self.db.log_message(conv.id, direction="outbound", text=result.text)
-        try:
-            await working.delete()
-        except Exception:
-            pass
         await self._reply(update, result.text or "(Pi returned no text.)")
 
     def _state_summary(self, state: dict[str, Any]) -> str:
