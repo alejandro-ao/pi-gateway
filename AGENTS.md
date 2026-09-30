@@ -76,11 +76,15 @@ pi-gateway logs -f
 pi-gateway stop
 ```
 
-Interactive Telegram configuration:
+Initialize a local instance in the Pi working directory:
 
 ```bash
-pi-gateway configure telegram
+pi-gateway init
+pi-gateway instances
+pi-gateway -i /path/to/bot status
 ```
+
+`configure telegram` also creates/updates a local config by default. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local state (config, DB, PID, log) belongs in `.pi-gateway/`; add that directory to bot projects' `.gitignore`.
 
 ## Repository Structure
 

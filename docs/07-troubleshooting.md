@@ -75,7 +75,7 @@ This is usually the allowlist doing its job.
 Check config:
 
 ```bash
-cat ~/.config/pi-gateway/config.yaml
+cat "$(pi-gateway config-path)"
 ```
 
 Verify:
@@ -128,7 +128,8 @@ pi-gateway stop
 If needed, remove the PID file manually:
 
 ```bash
-rm ~/.local/state/pi-gateway/pi-gateway.pid
+# For a local instance; use the legacy state path for an old global config.
+rm .pi-gateway/pi-gateway.pid
 ```
 
 Then restart:
@@ -149,7 +150,7 @@ pi-gateway logs -f
 Log file:
 
 ```text
-~/.local/state/pi-gateway/pi-gateway.log
+.pi-gateway/pi-gateway.log (local) or ~/.local/state/pi-gateway/pi-gateway.log (legacy)
 ```
 
 systemd mode:

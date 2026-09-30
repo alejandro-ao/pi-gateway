@@ -21,6 +21,7 @@ class PiConfig:
     command: str = "pi"
     cwd: str = field(default_factory=os.getcwd)
     session_dir: str | None = None
+    agent_dir: str | None = None
     default_model: str | None = None
     default_provider: str | None = None
     default_thinking: str | None = None
@@ -80,6 +81,7 @@ def load_config(path: str | None) -> GatewayConfig:
         command=str(pi_raw.get("command", "pi")),
         cwd=_expand_path(str(pi_raw.get("cwd", os.getcwd()))),
         session_dir=_expand_path(str(pi_raw["sessionDir"])) if pi_raw.get("sessionDir") else None,
+        agent_dir=_expand_path(str(pi_raw["agentDir"])) if pi_raw.get("agentDir") else None,
         default_model=pi_raw.get("defaultModel") or pi_raw.get("default_model"),
         default_provider=pi_raw.get("defaultProvider") or pi_raw.get("default_provider"),
         default_thinking=pi_raw.get("defaultThinking") or pi_raw.get("default_thinking"),

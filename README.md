@@ -47,7 +47,16 @@ Pi must already be installed and authenticated on the machine as the same user t
 
 ## Configure Telegram
 
-Create/update the default config at `~/.config/pi-gateway/config.yaml` interactively:
+Create an instance in the directory where Pi should work:
+
+```bash
+mkdir -p ~/bots/my-bot && cd ~/bots/my-bot
+pi-gateway init
+```
+
+`init` prompts for Telegram setup and writes `.pi-gateway/config.yaml`. The bot's SQLite database, PID and log also live under `.pi-gateway/`; **add `.pi-gateway/` to your project's `.gitignore`** (config may contain a bot token). `pi-gateway configure telegram` creates/updates the local config as well. Commands in this directory automatically select it; `-c <config-path>` always overrides discovery. Existing `~/.config/pi-gateway/config.yaml` installations remain usable when no local instance exists.
+
+Set a distinct bot token and allowed user ID for each instance. Each bot needs its own token. For separate *global* Pi skills/auth, use `pi-gateway init --pi-agent-dir /path/to/agent-dir` and authenticate Pi in that agent directory; otherwise Pi uses the OS user's shared agent directory. Project-local skills follow the configured Pi working directory. For an interactive update:
 
 ```bash
 pi-gateway configure telegram
@@ -106,10 +115,12 @@ pi-gateway logs -f
 pi-gateway stop
 ```
 
+Repeat `init` and `start` in other directories to run multiple bots concurrently. From anywhere, use `pi-gateway instances` to list initialized bots and `pi-gateway -i ~/bots/my-bot status|start|stop|logs` to manage one. The `-i` option expects an initialized bot directory; `-c` takes precedence if both are given. For production, use one systemd service per bot with its working directory set to the bot directory.
+
 `start` writes logs to:
 
 ```text
-~/.local/state/pi-gateway/pi-gateway.log
+.pi-gateway/pi-gateway.log (local instances) or ~/.local/state/pi-gateway/pi-gateway.log (legacy config)
 ```
 
 With an explicit config:
