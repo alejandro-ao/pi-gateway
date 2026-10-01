@@ -79,12 +79,12 @@ pi-gateway stop
 Initialize a local instance in the Pi working directory:
 
 ```bash
-pi-gateway init
+pi-gateway init --name research
 pi-gateway instances
-pi-gateway -i /path/to/bot status
+pi-gateway -i research status
 ```
 
-`configure telegram` also creates/updates a local config by default. Both commands accept optional `--model provider/model-id` and `--thinking <level>` for Pi startup defaults; interactive setup prompts for them as well. Existing values are retained when omitted. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local state (config, DB, PID, log) belongs in `.pi-gateway/`; add that directory to bot projects' `.gitignore`.
+`configure telegram` also creates/updates a local config by default. `init` and `configure telegram` accept optional `--name` for a unique gateway identifier; the registry indexes all configured bots (including custom `-c` files), and `-i` accepts names or bot directories. Both commands also accept optional `--model provider/model-id` and `--thinking <level>` for Pi startup defaults; interactive setup prompts for them as well. Existing values are retained when omitted. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local state (config, DB, PID, log) belongs in `.pi-gateway/`; add that directory to bot projects' `.gitignore`.
 
 ## Repository Structure
 
@@ -93,6 +93,7 @@ pi_gateway/
 ├── cli.py              # CLI, config wizard, foreground/background process commands
 ├── config.py           # YAML/env config loader and dataclasses
 ├── db.py               # SQLite schema and gateway persistence
+├── instance_registry.py # names to config paths; upgrades legacy path-only index
 ├── pi_rpc.py           # JSONL RPC subprocess client for `pi --mode rpc`
 ├── session_manager.py  # per-conversation Pi client cache/locks
 └── telegram_bot.py     # Telegram adapter, auth, commands, lifecycle notifications

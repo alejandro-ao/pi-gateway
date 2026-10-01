@@ -54,10 +54,10 @@ Create an instance in the directory where Pi should work:
 
 ```bash
 mkdir -p ~/bots/my-bot && cd ~/bots/my-bot
-pi-gateway init
+pi-gateway init --name research
 ```
 
-`init` prompts for Telegram setup and writes `.pi-gateway/config.yaml`. The bot's SQLite database, PID and log also live under `.pi-gateway/`; **add `.pi-gateway/` to your project's `.gitignore`** (config may contain a bot token). `pi-gateway configure telegram` creates/updates the local config as well. Commands in this directory automatically select it; `-c <config-path>` always overrides discovery. Existing `~/.config/pi-gateway/config.yaml` installations remain usable when no local instance exists.
+`init` prompts for a gateway name and Telegram setup, and writes `.pi-gateway/config.yaml`. The name is a gateway identifier, not a Pi session name or Telegram username. `--name research` also works non-interactively; names must be unique per OS user and use letters, digits, or hyphens (max 64 characters). Existing unnamed bots keep working and appear by path until named. The bot's SQLite database, PID and log also live under `.pi-gateway/`; **add `.pi-gateway/` to your project's `.gitignore`** (config may contain a bot token). `pi-gateway configure telegram` creates/updates the local config as well. Commands in this directory automatically select it; `-c <config-path>` always overrides discovery. Existing `~/.config/pi-gateway/config.yaml` installations remain usable when no local instance exists.
 
 Set a distinct bot token and allowed user ID for each instance. Each bot needs its own token. For separate *global* Pi skills/auth, use `pi-gateway init --pi-agent-dir /path/to/agent-dir` and authenticate Pi in that agent directory; otherwise Pi uses the OS user's shared agent directory. Project-local skills follow the configured Pi working directory. For an interactive update:
 
@@ -122,7 +122,7 @@ pi-gateway logs -f
 pi-gateway stop
 ```
 
-Repeat `init` and `start` in other directories to run multiple bots concurrently. From anywhere, use `pi-gateway instances` to list initialized bots and `pi-gateway -i ~/bots/my-bot status|start|stop|logs` to manage one. The `-i` option expects an initialized bot directory; `-c` takes precedence if both are given. For production, use one systemd service per bot with its working directory set to the bot directory.
+Repeat `init` and `start` in other directories to run multiple bots concurrently. From anywhere, use `pi-gateway instances` to list all configured bots and `pi-gateway -i research status` (or `start`, `stop`, `logs`) to manage one by name. `-i ~/bots/my-bot` still selects a bot directory, and `-c <config-file>` always takes precedence. Bare `pi-gateway stop` still selects the local config; it never guesses among bots. For production, use one systemd service per bot with its working directory set to the bot directory.
 
 `start` writes logs to:
 
@@ -133,16 +133,18 @@ Repeat `init` and `start` in other directories to run multiple bots concurrently
 With an explicit config (including two bots sharing one Pi working directory):
 
 ```bash
+pi-gateway -c a.yaml configure telegram --name research
+pi-gateway -c b.yaml configure telegram --name coding
 pi-gateway -c a.yaml start
 pi-gateway -c b.yaml start
-pi-gateway -c a.yaml stop
+pi-gateway -i coding stop
 pi-gateway -c config.yaml start
 pi-gateway -c config.yaml run
 # or
 pi-gateway run -c config.yaml
 ```
 
-Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history. If you previously ran an explicit `-c` config without `databasePath`, set `databasePath` to the old `pi-gateway.sqlite3` file before upgrading to retain its conversation mappings.
+`configure telegram --name <name>` can also name or rename an existing gateway (omit `--name` to retain it). To remove a stopped bot from the registry without deleting its config or database, run `pi-gateway instances forget <name>`. Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history. If you previously ran an explicit `-c` config without `databasePath`, set `databasePath` to the old `pi-gateway.sqlite3` file before upgrading to retain its conversation mappings.
 
 Development checkout:
 

@@ -19,6 +19,7 @@ pi-gateway CLI
 Gateway runtime
   ├── Config loader
   ├── SQLite GatewayDB
+  ├── InstanceRegistry (gateway names → config paths)
   ├── TelegramGateway adapter
   └── PiSessionManager
          └── PiRpcClient subprocesses
@@ -55,6 +56,7 @@ pi-gateway/
 │   ├── cli.py              # command-line interface and daemon startup
 │   ├── config.py           # config dataclasses and YAML/env loading
 │   ├── db.py               # SQLite schema and database access
+│   ├── instance_registry.py # names and config discovery for multiple bots
 │   ├── pi_rpc.py           # Pi RPC subprocess client
 │   ├── session_manager.py  # per-conversation Pi client cache and locks
 │   └── telegram_bot.py     # Telegram adapter and command router
@@ -84,6 +86,7 @@ The tradeoff is that we must manage subprocesses, JSONL framing, and stdout/stde
 | Pi conversation history | Pi | JSONL session files |
 | Active branch/session tree | Pi | JSONL session files |
 | Telegram to Pi mapping | Gateway | SQLite |
+| Gateway instance name and config path | Gateway | YAML config + per-user registry |
 | Inbound/outbound audit log | Gateway | SQLite |
 | Running child processes | Gateway | In memory + PID file for background daemon |
 

@@ -1,3 +1,5 @@
+# Optional gateway identifier (unique per user, not a Pi session name):
+instanceName: research
 databasePath: ~/.local/share/pi-gateway/pi-gateway.sqlite3
 logLevel: INFO
 

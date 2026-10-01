@@ -5,7 +5,6 @@ import asyncio
 import fcntl
 import hashlib
 import importlib.metadata
-import json
 import logging
 import os
 import signal
@@ -21,6 +20,7 @@ import yaml
 from . import __version__
 from .config import custom_state_dir, default_database_path, load_config
 from .db import GatewayDB
+from .instance_registry import InstanceRegistry, normalize_name
 from .session_manager import PiSessionManager
 from .telegram_bot import TelegramGateway
 from .version_check import check_version, format_update_notice
@@ -64,7 +64,16 @@ def resolve_config(args: argparse.Namespace, *, creating: bool = False) -> Path:
     if args.config:
         return expand_path(args.config)
     if getattr(args, "instance", None):
-        path = local_config(expand_path(args.instance))
+        instance = args.instance
+        registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+        with registry.locked():
+            match = next((entry for entry in registry.load() if entry["name"] == instance.lower()), None)
+        if match:
+            path = Path(match["config"])
+        elif "/" in instance or instance.startswith("~") or Path(instance).is_dir():
+            path = local_config(expand_path(instance))
+        else:
+            raise SystemExit(f"Unknown instance {instance!r}. See `pi-gateway instances`.")
         if not path.is_file():
             raise SystemExit(f"No initialized instance at {path}")
         return path
@@ -85,43 +94,37 @@ def instance_state(config: Path) -> tuple[Path, Path]:
     return state_dir / "pi-gateway.pid", state_dir / "pi-gateway.log"
 
 
-def register_instance(config: Path) -> None:
-    registry = expand_path(REGISTRY_PATH)
-    registry.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = registry.with_suffix(".lock")
-    with lock_path.open("a+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        paths = []
-        if registry.exists():
-            paths = json.loads(registry.read_text(encoding="utf-8"))
-        entry = str(config.resolve())
-        if entry not in paths:
-            paths.append(entry)
-            with tempfile.NamedTemporaryFile(mode="w", dir=registry.parent, delete=False, encoding="utf-8") as tmp:
-                json.dump(paths, tmp, indent=2)
-                tmp.write("\n")
-                tmp_path = Path(tmp.name)
-            try:
-                tmp_path.replace(registry)
-            finally:
-                tmp_path.unlink(missing_ok=True)
-
-
 def list_instances(args: argparse.Namespace) -> None:
-    registry = expand_path(REGISTRY_PATH)
-    paths = json.loads(registry.read_text(encoding="utf-8")) if registry.exists() else []
-    if not paths:
-        print("No registered local instances. Run `pi-gateway init` in a bot directory.")
+    registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+    with registry.locked():
+        entries = registry.load()
+    if not entries:
+        print("No registered instances. Run `pi-gateway init` in a bot directory.")
         return
-    for entry in paths:
-        config = Path(entry)
+    for entry in entries:
+        config = Path(entry["config"])
         if not config.is_file():
             state = "missing config"
         else:
             pid, _ = instance_state(config)
             running = read_pid(pid)
             state = f"running (PID {running})" if running and is_process_running(running) else "stopped"
-        print(f"{config.parent.parent}: {state}  (config: {config})")
+        print(f"{entry['name'] or '(unnamed)'}: {state}  (config: {config})")
+
+
+def forget_instance(args: argparse.Namespace) -> None:
+    registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+    with registry.locked():
+        entries = registry.load()
+        match = next((entry for entry in entries if entry["name"] == args.name.lower()), None)
+        if match is None:
+            raise SystemExit(f"Unknown instance {args.name!r}.")
+        pid, _ = instance_state(Path(match["config"]))
+        running = read_pid(pid)
+        if running and is_process_running(running):
+            raise SystemExit(f"Stop instance {args.name!r} before forgetting it.")
+        registry.save([entry for entry in entries if entry is not match])
+    print(f"Forgot {args.name!r} (config and database were not deleted).")
 
 
 def init_instance(args: argparse.Namespace) -> None:
@@ -322,9 +325,30 @@ def configure_telegram(args: argparse.Namespace) -> None:
     pi.setdefault("idleTtlSeconds", 1800)
     pi.setdefault("extraArgs", [])
 
-    write_raw_config(path, data)
-    if path == local_config() or (path.name == "config.yaml" and path.parent.name == ".pi-gateway"):
-        register_instance(path)
+    existing_name = data.get("instanceName")
+    if existing_name is not None and not isinstance(existing_name, str):
+        raise ValueError("instanceName in config must be a string")
+    name = args.name if args.name is not None else existing_name
+    if args.name is None and interactive:
+        while True:
+            candidate = _prompt("Gateway name (unique; blank for unnamed)", default=existing_name)
+            if not candidate:
+                break
+            try:
+                name = normalize_name(candidate)
+                break
+            except ValueError as exc:
+                print(exc)
+    if name is not None:
+        name = normalize_name(name)
+        data["instanceName"] = name
+
+    registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+    with registry.locked():
+        entries = registry.upsert(registry.load(), path, name)
+        write_raw_config(path, data)
+        registry.save(entries)
+    if path.name == "config.yaml" and path.parent.name == ".pi-gateway":
         print("Keep .pi-gateway/ out of version control: it may contain secrets and session metadata.")
     print(f"\nWrote config: {path}")
     if str(telegram.get("botToken", "")).startswith("env:"):
@@ -466,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pi-gateway")
     parser.add_argument("--version", action="version", version=f"pi-gateway {package_version()}")
     parser.add_argument("-c", "--config", help="Path to config YAML (overrides local instance)")
-    parser.add_argument("-i", "--instance", help="Manage an initialized bot directory from anywhere")
+    parser.add_argument("-i", "--instance", help="Manage a gateway by name or initialized bot directory")
     sub = parser.add_subparsers(dest="command")
 
     run = sub.add_parser("run", help="Run the Telegram gateway daemon in the foreground")
@@ -493,6 +517,7 @@ def build_parser() -> argparse.ArgumentParser:
     telegram.add_argument("--allowed-user-id", type=int, help="Only accept messages from this Telegram user id")
     telegram.add_argument("--pi-cwd", help="Working directory where Pi should run sessions")
     telegram.add_argument("--pi-agent-dir", help="Optional isolated Pi agent directory for global skills and credentials")
+    telegram.add_argument("--name", help="Unique gateway name for listing and remote management")
     telegram.add_argument("--model", help="Pi startup model as provider/model-id (omit to use Pi's default)")
     telegram.add_argument("--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}")
     telegram.add_argument("--allow-groups", action="store_true", help="Allow the bot in group chats")
@@ -503,12 +528,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("config-path", help="Print the effective config path")
-    sub.add_parser("instances", help="List initialized local instances")
+    instances = sub.add_parser("instances", help="List registered gateway instances")
+    instances_sub = instances.add_subparsers(dest="instances_command")
+    forget = instances_sub.add_parser("forget", help="Remove a stopped gateway from the registry")
+    forget.add_argument("name", help="Gateway name to unregister (does not delete files)")
     init = sub.add_parser("init", help="Initialize a bot in the current directory")
     init.add_argument("--bot-token")
     init.add_argument("--allowed-user-id", type=int)
     init.add_argument("--pi-cwd")
     init.add_argument("--pi-agent-dir")
+    init.add_argument("--name", help="Unique gateway name for listing and remote management")
     init.add_argument("--model", help="Pi startup model as provider/model-id")
     init.add_argument("--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}")
     init.add_argument("--allow-groups", action="store_true")
@@ -537,7 +566,10 @@ def main() -> None:
     elif args.command == "init":
         init_instance(args)
     elif args.command == "instances":
-        list_instances(args)
+        if args.instances_command == "forget":
+            forget_instance(args)
+        else:
+            list_instances(args)
     elif args.command == "config-path":
         show_config_path(args)
     elif hasattr(args, "_help_parser"):
