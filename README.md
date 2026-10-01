@@ -183,7 +183,7 @@ uv run pi-gateway run
 - `/steer <text>` steer current/next turn
 - `/pi <text>` send raw text to Pi, including Pi slash commands
 
-Normal Telegram messages are sent to Pi as prompts.
+Normal Telegram messages are sent to Pi as prompts. Pi handles automatic context compaction (when enabled in Pi settings); the gateway waits for Pi's `agent_settled` event before replying, including any overflow recovery, retries, or queued work after an `agent_end`. This requires a Pi version that emits `agent_settled`. Use `/compact [instructions]` to request manual compaction.
 
 ## Session mapping
 

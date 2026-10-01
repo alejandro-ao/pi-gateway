@@ -68,7 +68,8 @@ Events then stream asynchronously:
 
 ```json
 {"type":"message_end","message":{...}}
-{"type":"agent_end","messages":[...]}
+{"type":"agent_end","messages":[...],"willRetry":false}
+{"type":"agent_settled"}
 ```
 
 ## Request/Response Handling
@@ -99,9 +100,9 @@ future resolves
 {"type":"prompt","message":"..."}
 ```
 
-Then it consumes events until `agent_end`.
+Then it consumes events until `agent_settled`. `agent_end` closes only a low-level attempt: Pi may compact, retry an overflow, or process queued follow-ups before settling. Before sending a new prompt, the client drains old command events; it never drains events after sending, because Pi can finish before its command response arrives. Each new `agent_start` clears the previous attempt's candidate reply.
 
-The final assistant text is extracted from either:
+The final assistant text from the last attempt is extracted from either:
 
 - the last assistant `message_end`, or
 - `agent_end.finalText` / `agent_end.final_text`, or
@@ -109,7 +110,7 @@ The final assistant text is extracted from either:
 
 When `agent_end.messages` is present, `PromptResult.events` omits that message history and records `messagesOmitted`/`messageCount` metadata instead. This prevents gateway callers from retaining a full session snapshot in memory when Telegram only needs the final assistant response.
 
-This avoids requiring token-by-token Telegram streaming for v1.
+This avoids requiring token-by-token Telegram streaming for v1. It relies on a Pi version that emits `agent_settled`; older Pi versions that lack this event must be upgraded (the gateway intentionally does not fall back to `agent_end`, which could send an incomplete reply).
 
 ## Supported Pi Operations
 

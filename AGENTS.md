@@ -131,7 +131,7 @@ Important Pi RPC assumptions:
 - Start command is `pi --mode rpc`.
 - Existing sessions can resume with `--session <session-file>`.
 - JSONL records are newline-delimited.
-- Prompt completion is detected by consuming events until `agent_end`.
+- Prompt completion requires `agent_settled`; `agent_end` only ends one low-level run and Pi may still compact/retry.
 
 If Pi RPC protocol changes, update:
 
