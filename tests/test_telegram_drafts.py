@@ -55,6 +55,26 @@ class DraftPreviewTest(unittest.IsolatedAsyncioTestCase):
 
 
 class TelegramDraftRoutingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_status_distinguishes_pi_activity_from_telegram_preview(self):
+        for chat_type, supports_drafts in (("private", True), ("private", False), ("supergroup", True)):
+            with self.subTest(chat_type=chat_type, supports_drafts=supports_drafts):
+                gateway = TelegramGateway.__new__(TelegramGateway)
+                bot = SimpleNamespace(send_message_draft=AsyncMock()) if supports_drafts else SimpleNamespace()
+                gateway.app = SimpleNamespace(bot=bot)
+                gateway.sessions = SimpleNamespace(
+                    state=AsyncMock(return_value={"isStreaming": False}), stats=AsyncMock(return_value={}),
+                )
+                gateway._reply = AsyncMock()
+                update = SimpleNamespace(effective_chat=SimpleNamespace(id=123, type=chat_type))
+                with patch("pi_gateway.telegram_bot.check_version", new_callable=AsyncMock), patch(
+                    "pi_gateway.telegram_bot.format_status_line", return_value="Version: test"
+                ):
+                    await gateway._status(update, SimpleNamespace(id=1))
+                status = gateway._reply.call_args.args[1]
+                self.assertIn("Pi generating now: False", status)
+                expected = "available" if chat_type == "private" and supports_drafts else "unavailable"
+                self.assertIn(f"Telegram draft preview: {expected}", status)
+
     async def test_only_private_chats_stream_and_final_answer_is_sent(self):
         for chat_type, supports_drafts in (("private", True), ("private", False), ("supergroup", True)):
             with self.subTest(chat_type=chat_type, supports_drafts=supports_drafts):

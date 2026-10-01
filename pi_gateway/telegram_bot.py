@@ -322,6 +322,10 @@ class TelegramGateway:
             log.exception("message failed")
             await self._reply(update, f"Error: {e}")
 
+    def _drafts_available(self, update: Update) -> bool:
+        chat = update.effective_chat
+        return bool(chat and chat.type == "private" and hasattr(self.app.bot, "send_message_draft"))
+
     async def _send_to_pi(self, update: Update, conv: Conversation, text: str, *, streaming_behavior: str | None = None) -> None:
         await self._typing(update)
         message = update.effective_message
@@ -331,7 +335,7 @@ class TelegramGateway:
         chat = update.effective_chat
         preview = (
             DraftPreview(self.app.bot, chat.id, working, message.message_thread_id)
-            if chat and chat.type == "private" and hasattr(self.app.bot, "send_message_draft") else None
+            if chat and self._drafts_available(update) else None
         )
         try:
             result = await self.sessions.prompt(
@@ -358,12 +362,15 @@ class TelegramGateway:
             f"File: {state.get('sessionFile')}\n"
             f"Model: {provider}/{model_id}\n"
             f"Thinking: {state.get('thinkingLevel')}\n"
-            f"Streaming: {state.get('isStreaming')}"
+            f"Pi generating now: {state.get('isStreaming')}"
         )
 
     async def _status(self, update: Update, conv: Conversation) -> None:
         state = await self.sessions.state(conv)
         text = self._state_summary(state)
+        text += "\nTelegram draft preview: " + (
+            "available (private chat)" if self._drafts_available(update) else "unavailable (private chat / newer SDK required)"
+        )
         version_status = await check_version()
         text += f"\n{format_status_line(version_status)}"
         try:
