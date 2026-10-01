@@ -144,7 +144,19 @@ pi-gateway -c config.yaml run
 pi-gateway run -c config.yaml
 ```
 
-`configure telegram --name <name>` can also name or rename an existing gateway (omit `--name` to retain it). To remove a stopped bot from the registry without deleting its config or database, run `pi-gateway instances forget <name>`. Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history. If you previously ran an explicit `-c` config without `databasePath`, set `databasePath` to the old `pi-gateway.sqlite3` file before upgrading to retain its conversation mappings.
+`configure telegram --name <name>` can also name or rename an existing gateway (omit `--name` to retain it). To remove a stopped bot from the registry **without** deleting its config, run `pi-gateway instances forget <name>`.
+
+To delete a bot's config and unregister it:
+
+```bash
+pi-gateway remove research --dry-run  # Show the exact config path; change nothing
+pi-gateway remove research            # Confirm interactively (stopped bots only)
+pi-gateway remove research --stop --yes  # Stop a background bot, then remove; for automation
+# Unnamed bots can be selected explicitly by their config path:
+pi-gateway -c /absolute/path/to/bot.yaml remove --yes
+```
+
+`remove` never deletes SQLite databases, logs, directories, or Pi session files. `--stop` handles bots started with `pi-gateway start`; stop foreground or systemd-managed bots through their supervisor before removing them. If a bot fails to stop within 10 seconds, its config is kept. After removal, commands run from its former directory may fall back to the legacy global config, so target other bots by name or `-c`. Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history. If you previously ran an explicit `-c` config without `databasePath`, set `databasePath` to the old `pi-gateway.sqlite3` file before upgrading to retain its conversation mappings.
 
 Development checkout:
 

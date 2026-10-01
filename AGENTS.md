@@ -82,6 +82,7 @@ Initialize a local instance in the Pi working directory:
 pi-gateway init --name research
 pi-gateway instances
 pi-gateway -i research status
+pi-gateway remove research --dry-run  # preview config-only deletion
 ```
 
 `configure telegram` also creates/updates a local config by default. `init` and `configure telegram` accept optional `--name` for a unique gateway identifier; the registry indexes all configured bots (including custom `-c` files), and `-i` accepts names or bot directories. Both commands also accept optional `--model provider/model-id` and `--thinking <level>` for Pi startup defaults; interactive setup prompts for them as well. Existing values are retained when omitted. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local state (config, DB, PID, log) belongs in `.pi-gateway/`; add that directory to bot projects' `.gitignore`.
@@ -101,6 +102,7 @@ pi_gateway/
 
 ## Design Rules
 
+- `remove <name>` deletes only the named gateway's config and registry entry; never delete its database, logs, directories, or Pi session files. Refuse live background PIDs unless `--stop` succeeds.
 - Do not duplicate Pi conversation history in SQLite.
 - Store gateway metadata in SQLite: Telegram identity, Pi session file/id/name, audit messages.
 - Prefer `pi_session_file` over only `pi_session_id` when resuming sessions.

@@ -19,6 +19,7 @@ pi-gateway configure telegram  # interactive config wizard
 pi-gateway init                # create local instance and configure Telegram
 pi-gateway instances           # list registered instances (including custom -c configs)
 pi-gateway instances forget <name>  # unregister stopped bot without deleting files
+pi-gateway remove <name> [--dry-run|--stop|--yes]  # delete only its config
 pi-gateway -i <name|directory> status  # manage a bot from elsewhere
 pi-gateway config-path         # print selected config path
 ```
@@ -96,6 +97,10 @@ remove stale PID file if process exits
 ```
 
 The daemon catches SIGTERM in `run_gateway()`, which lets it send the Telegram disconnected notification before shutting down.
+
+## Safe Removal
+
+`pi-gateway remove <name>` (or `pi-gateway -c /path/to/config.yaml remove` for an unnamed bot) resolves only a registered config. It prints the exact config path and status, refuses a live background PID unless `--stop` is given, and asks for confirmation unless `--yes` is passed. `--dry-run` never stops or deletes anything. On `--stop`, removal checks again that the background PID is no longer running before unlinking the config. A shared registry lock serializes background starts, registration, and removal to prevent starting a config while it is being removed. Foreground and systemd processes are not tracked by the background PID file and must be stopped separately. SQLite data, logs, Pi sessions, and parent directories are preserved. `instances forget` remains the non-deleting alternative.
 
 ## Logs Flow: `logs`
 

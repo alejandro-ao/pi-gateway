@@ -127,6 +127,53 @@ def forget_instance(args: argparse.Namespace) -> None:
     print(f"Forgot {args.name!r} (config and database were not deleted).")
 
 
+def remove_gateway(args: argparse.Namespace) -> None:
+    if args.target and (args.config or args.instance):
+        raise SystemExit("Specify either a gateway name or -c/-i, not both.")
+    if not args.target and not (args.config or args.instance):
+        raise SystemExit("Specify a gateway name, -c <config-file>, or -i <instance>.")
+    config = resolve_config(args) if not args.target else None
+    registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+    with registry.locked():
+        entries = registry.load()
+        match = next(
+            (
+                entry for entry in entries
+                if (entry["name"] == args.target.lower() if args.target else entry["config"] == str(config))
+            ),
+            None,
+        )
+        if match is None:
+            raise SystemExit("Gateway is not registered. See `pi-gateway instances`.")
+        path = Path(match["config"])
+        label = match["name"] or str(path)
+        pid_file, _ = instance_state(path)
+        pid = read_pid(pid_file)
+        running = bool(pid and is_process_running(pid))
+        print(f"Gateway: {label}\nConfig: {path}\nStatus: {'running' if running else 'stopped'}")
+        if args.dry_run:
+            print("Dry run: nothing changed. Database, logs, and Pi sessions are never removed.")
+            return
+        if running and not args.stop:
+            raise SystemExit("Gateway is running. Stop it first or pass --stop.")
+        if not args.yes:
+            try:
+                answer = input("Delete this config and unregister the gateway? [y/N]: ")
+            except EOFError as exc:
+                raise SystemExit("Confirmation required; pass --yes for automation.") from exc
+            if answer.strip().lower() not in {"y", "yes"}:
+                print("Cancelled; nothing changed.")
+                return
+        if running:
+            stop_background(argparse.Namespace(config=str(path), instance=None, timeout=args.timeout))
+            pid = read_pid(pid_file)
+            if pid and is_process_running(pid):
+                raise SystemExit("Gateway is still running; config was not removed.")
+        path.unlink(missing_ok=True)
+        registry.save([entry for entry in entries if entry is not match])
+    print("Removed config and registry entry. Database, logs, and Pi sessions were preserved.")
+
+
 def init_instance(args: argparse.Namespace) -> None:
     path = local_config()
     if path.exists():
@@ -392,35 +439,35 @@ def read_pid(path: Path) -> int | None:
 
 def start_background(args: argparse.Namespace) -> None:
     config = resolve_config(args)
-    if not config.is_file():
-        raise SystemExit(f"Config not found: {config}. Run `pi-gateway init` first.")
-    settings = load_config(str(config))
-    if not settings.telegram or not settings.telegram.allowed_user_ids:
-        raise SystemExit("Configure a Telegram token and allowed user ID before starting.")
-    pid_file, log_file = instance_state(config)
-    existing = read_pid(pid_file)
-    if existing and is_process_running(existing):
-        print(f"pi-gateway is already running with PID {existing}")
-        print(f"Log: {log_file}")
-        return
+    registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+    # Configure/remove hold this lock too: do not spawn from a config being deleted.
+    with registry.locked():
+        if not config.is_file():
+            raise SystemExit(f"Config not found: {config}. Run `pi-gateway init` first.")
+        settings = load_config(str(config))
+        if not settings.telegram or not settings.telegram.allowed_user_ids:
+            raise SystemExit("Configure a Telegram token and allowed user ID before starting.")
+        pid_file, log_file = instance_state(config)
+        existing = read_pid(pid_file)
+        if existing and is_process_running(existing):
+            print(f"pi-gateway is already running with PID {existing}")
+            print(f"Log: {log_file}")
+            return
 
-    pid_file.parent.mkdir(parents=True, exist_ok=True)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    cmd = [sys.argv[0], "run", "--config", str(config)]
-
-    with log_file.open("ab", buffering=0) as out:
-        out.write(f"\n--- starting pi-gateway at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode())
-        process = subprocess.Popen(
-            cmd,
-            stdout=out,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True,
-        )
-
-    pid_file.write_text(str(process.pid), encoding="utf-8")
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [sys.argv[0], "run", "--config", str(config)]
+        with log_file.open("ab", buffering=0) as out:
+            out.write(f"\n--- starting pi-gateway at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode())
+            process = subprocess.Popen(
+                cmd,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+        pid_file.write_text(str(process.pid), encoding="utf-8")
     print(f"Started pi-gateway in the background with PID {process.pid}")
     print(f"Log: {log_file}")
     print("Stop with: pi-gateway stop")
@@ -502,6 +549,13 @@ def build_parser() -> argparse.ArgumentParser:
     stop = sub.add_parser("stop", help="Stop a background pi-gateway process")
     stop.add_argument("--timeout", type=float, default=10, help="Seconds to wait for graceful shutdown")
 
+    remove = sub.add_parser("remove", help="Delete a gateway config and unregister it (preserves history)")
+    remove.add_argument("target", nargs="?", help="Registered gateway name; or use -c/-i")
+    remove.add_argument("--dry-run", action="store_true", help="Show what would be removed without changing anything")
+    remove.add_argument("--stop", action="store_true", help="Stop a running background gateway before removal")
+    remove.add_argument("--timeout", type=float, default=10, help="Seconds to wait when using --stop")
+    remove.add_argument("--yes", action="store_true", help="Skip interactive confirmation (for automation)")
+
     sub.add_parser("status", help="Show background process status")
 
     logs = sub.add_parser("logs", help="Show pi-gateway log file")
@@ -557,6 +611,8 @@ def main() -> None:
         start_background(args)
     elif args.command == "stop":
         stop_background(args)
+    elif args.command == "remove":
+        remove_gateway(args)
     elif args.command == "status":
         status_background(args)
     elif args.command == "logs":
