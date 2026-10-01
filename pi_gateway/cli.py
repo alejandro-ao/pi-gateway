@@ -269,6 +269,73 @@ def parse_model(value: str) -> tuple[str, str]:
     return provider, model_id
 
 
+def list_pi_models(pi: dict[str, Any]) -> list[str] | None:
+    """Read Pi's catalog for the same executable and agent directory as the gateway."""
+    env = os.environ.copy()
+    if pi.get("agentDir"):
+        env["PI_CODING_AGENT_DIR"] = str(pi["agentDir"])
+    try:
+        result = subprocess.run(
+            [str(pi["command"]), "--list-models"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+            cwd=str(pi["cwd"]),
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = result.stdout.splitlines()
+    if not lines or lines[0].split()[:2] != ["provider", "model"]:
+        return None
+    models = []
+    for line in lines[1:]:
+        columns = line.split()
+        if len(columns) >= 2:
+            model = f"{columns[0]}/{columns[1]}"
+            try:
+                parse_model(model)
+            except ValueError:
+                continue
+            models.append(model)
+    return list(dict.fromkeys(models)) or None
+
+
+def select_model(pi: dict[str, Any], current: str | None) -> str | None:
+    """Return a selected model, empty string to reset, or None to keep existing settings."""
+    models = list_pi_models(pi)
+    if models is None:
+        print("Pi model list unavailable; enter a model ID manually (see `pi --list-models`).")
+        while True:
+            model = _prompt("Model (provider/model-id; blank to keep current)", default=current)
+            if not model:
+                return None
+            if model.lower() == "default":
+                return ""
+            try:
+                parse_model(model)
+                return model
+            except ValueError as exc:
+                print(exc)
+
+    from prompt_toolkit import prompt
+    from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
+    from prompt_toolkit.validation import Validator
+
+    print(f"\nSearch {len(models)} Pi models (type to filter; Tab/arrow keys to select).")
+    print(f"Current: {current or 'Pi default'}. Enter on empty to keep it; type 'default' to use Pi default.")
+    completer = FuzzyCompleter(WordCompleter(models, ignore_case=True))
+    validator = Validator.from_callable(
+        lambda text: not text or text.lower() == "default" or text in models,
+        error_message="Select a listed model (Tab/arrow keys), or type 'default'.",
+    )
+    model = prompt("Model: ", completer=completer, complete_while_typing=True, validator=validator).strip()
+    if model.lower() == "default":
+        return ""
+    return model or None
+
+
 def configure_telegram(args: argparse.Namespace) -> None:
     path = resolve_config(args, creating=True)
     data = load_raw_config(path)
@@ -337,22 +404,16 @@ def configure_telegram(args: argparse.Namespace) -> None:
     if model == "":
         raise ValueError("Model must be <provider>/<model-id> (see `pi --list-models`).")
     if model is None and interactive:
-        print("\nPi model setup (optional; run `pi --list-models` to see model IDs).")
         current_model = (
             f"{pi['defaultProvider']}/{pi['defaultModel']}"
             if pi.get("defaultProvider") and pi.get("defaultModel")
             else None
         )
-        while True:
-            model = _prompt("Model (provider/model-id; blank for Pi default)", default=current_model)
-            if not model:
-                break
-            try:
-                parse_model(model)
-                break
-            except ValueError as exc:
-                print(exc)
-    if model:
+        model = select_model(pi, current_model)
+    if model == "":
+        pi.pop("defaultProvider", None)
+        pi.pop("defaultModel", None)
+    elif model:
         pi["defaultProvider"], pi["defaultModel"] = parse_model(model)
 
     thinking = args.thinking

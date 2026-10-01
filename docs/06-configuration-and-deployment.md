@@ -63,7 +63,7 @@ It asks for:
 4. Optional Pi model (`provider/model-id`) and thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
 5. Optional unique gateway name, also accepted as `--name` on `init` or `configure telegram`. A name identifies the gateway config, not a Pi session; renaming it never moves its database or PID/log files.
 
-For automation use `pi-gateway init --model anthropic/claude-sonnet-4-5 --thinking high --allowed-user-id 123456789`, or pass the same flags to `configure telegram`. Pi must support and have credentials for the selected model; `pi --list-models` lists its model catalog. Omit these choices to use Pi defaults, or to retain existing gateway defaults on reconfiguration. Restart running gateways after changing their config.
+Interactive setup offers a fuzzy-searchable Pi model picker populated by `pi --list-models` (using the configured Pi executable, working directory, and agent directory). Type to filter, use Tab/arrow keys to select, and Enter to confirm; empty keeps the current selection and `default` resets it to Pi's default. If Pi cannot list models, setup accepts a manually entered model ID instead. For automation use `pi-gateway init --model anthropic/claude-sonnet-4-5 --thinking high --allowed-user-id 123456789`, or pass the same flags to `configure telegram`; these flags skip the picker and are not catalog-validated. Pi must support and have credentials for the selected model: listing it does not guarantee authentication. Omit flags to use Pi defaults, or to retain existing gateway defaults on reconfiguration. Restart running gateways after changing their config.
 
 The allowed user id is important. Without it, anyone who finds your bot could talk to it.
 

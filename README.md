@@ -65,7 +65,7 @@ Set a distinct bot token and allowed user ID for each instance. Each bot needs i
 pi-gateway configure telegram
 ```
 
-It will ask for your BotFather token, your allowed Telegram user id, the Pi working directory, and optionally a Pi model and thinking level. Leave the model and thinking prompts blank to use Pi's defaults; when updating an existing config, blank keeps the current selections. Run `pi --list-models` to see model IDs (listed models may still require authentication).
+It will ask for your BotFather token, your allowed Telegram user id, the Pi working directory, and optionally a Pi model and thinking level. In a terminal, setup shows a searchable list from `pi --list-models`: type to filter, use Tab/arrow keys to select a suggestion, then Enter. Empty selection keeps the current model (Pi default on a new config); type `default` to clear a previously selected model. If Pi cannot list models, setup falls back to manual `provider/model-id` entry. Listed models may still require authentication.
 
 You can also configure non-interactively:
 
