@@ -19,7 +19,7 @@ uv tool install git+https://github.com/alejandro-ao/pi-gateway.git
 Install a specific tag or branch:
 
 ```bash
-uv tool install git+https://github.com/alejandro-ao/pi-gateway.git@v0.2.0
+uv tool install git+https://github.com/alejandro-ao/pi-gateway.git@v0.2.1
 ```
 
 Upgrade later:
