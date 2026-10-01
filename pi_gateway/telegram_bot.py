@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import secrets
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from .config import GatewayConfig, TelegramConfig
 
 if TYPE_CHECKING:
-    from telegram import Update
+    from telegram import Bot, Message, Update
     from telegram.ext import ContextTypes
 from .db import Conversation, GatewayDB
 from .session_manager import PiSessionManager
@@ -55,6 +58,66 @@ def chunks(text: str, limit: int = 3900) -> list[str]:
         out.append(text[:split])
         text = text[split:].lstrip("\n")
     return out
+
+
+class DraftPreview:
+    """Coalesce Pi text updates into rate-limited, ephemeral Telegram drafts."""
+
+    def __init__(self, bot: Bot, chat_id: int, working: Message, thread_id: int | None = None):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.working: Message | None = working
+        self.thread_id = thread_id
+        self.draft_id = secrets.randbelow(2**31 - 1) + 1
+        self.text = ""
+        self.changed = asyncio.Event()
+        self.task: asyncio.Task[None] | None = None
+        self.closed = False
+
+    def update(self, text: str) -> None:
+        if self.closed:
+            return
+        self.text = text[:TELEGRAM_LIMIT]
+        self.changed.set()
+        if self.task is None:
+            self.task = asyncio.create_task(self._send(), name="telegram-draft-preview")
+
+    async def _send(self) -> None:
+        last_text: str | None = None
+        last_time = 0.0
+        try:
+            while True:
+                await self.changed.wait()
+                self.changed.clear()
+                if not self.text and last_text is None:
+                    continue  # Keep the working message until there is real text.
+                if last_time:
+                    await asyncio.sleep(max(0, 0.8 - (monotonic() - last_time)))
+                text = self.text
+                if text == last_text:
+                    continue
+                await self.bot.send_message_draft(
+                    chat_id=self.chat_id, draft_id=self.draft_id, text=text, message_thread_id=self.thread_id,
+                )
+                last_text = text
+                last_time = monotonic()
+                if self.working:
+                    try:
+                        await self.working.delete()
+                    except Exception:
+                        pass
+                    self.working = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("Telegram draft streaming failed; final reply will still be sent", exc_info=True)
+            self.closed = True
+
+    async def close(self) -> None:
+        self.closed = True
+        if self.task:
+            self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
 
 
 class TelegramGateway:
@@ -265,9 +328,18 @@ class TelegramGateway:
         if message is None:
             return
         working = await message.reply_text("⏳ Pi is working...")
+        chat = update.effective_chat
+        preview = (
+            DraftPreview(self.app.bot, chat.id, working, message.message_thread_id)
+            if chat and chat.type == "private" and hasattr(self.app.bot, "send_message_draft") else None
+        )
         try:
-            result = await self.sessions.prompt(conv, text, streaming_behavior=streaming_behavior)
+            result = await self.sessions.prompt(
+                conv, text, streaming_behavior=streaming_behavior, on_text=preview.update if preview else None,
+            )
         finally:
+            if preview:
+                await preview.close()
             try:
                 await working.delete()
             except Exception:

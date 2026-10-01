@@ -110,7 +110,7 @@ The final assistant text from the last attempt is extracted from either:
 
 When `agent_end.messages` is present, `PromptResult.events` omits that message history and records `messagesOmitted`/`messageCount` metadata instead. This prevents gateway callers from retaining a full session snapshot in memory when Telegram only needs the final assistant response.
 
-This avoids requiring token-by-token Telegram streaming for v1. It relies on a Pi version that emits `agent_settled`; older Pi versions that lack this event must be upgraded (the gateway intentionally does not fall back to `agent_end`, which could send an incomplete reply).
+Optional Telegram draft previews consume only `message_update.assistantMessageEvent` records with `type: text_delta` and append their `delta` strings; thinking deltas are excluded. An `agent_start` or assistant `message_start` resets the preview so retries do not append to stale text. The callback is synchronous and only records the latest preview; Telegram sends throttled drafts independently, so Pi event consumption is not blocked by Bot API calls. The final answer still comes from the authoritative `message_end`/`agent_end` data after `agent_settled`, never from the preview. Older Pi versions without `agent_settled` must be upgraded (there is intentionally no `agent_end` fallback).
 
 ## Supported Pi Operations
 

@@ -183,7 +183,7 @@ uv run pi-gateway run
 - `/steer <text>` steer current/next turn
 - `/pi <text>` send raw text to Pi, including Pi slash commands
 
-Normal Telegram messages are sent to Pi as prompts. Pi handles automatic context compaction (when enabled in Pi settings); the gateway waits for Pi's `agent_settled` event before replying, including any overflow recovery, retries, or queued work after an `agent_end`. This requires a Pi version that emits `agent_settled`. Use `/compact [instructions]` to request manual compaction.
+Normal Telegram messages are sent to Pi as prompts. In private chats, the gateway streams Pi's text deltas to ephemeral Telegram message drafts (requires `python-telegram-bot` 22.7+ and Telegram support). Drafts are throttled and capped at 4,096 characters; long final replies still arrive in separate message chunks. Group chats and unavailable draft APIs keep the working-message behavior. Pi handles automatic context compaction (when enabled in Pi settings); the gateway waits for Pi's `agent_settled` event before sending the persistent final reply, including any overflow recovery, retries, or queued work after an `agent_end`. This requires a Pi version that emits `agent_settled`. The `/status` Streaming field reports Pi's current activity, not whether Telegram drafts are enabled. Use `/compact [instructions]` to request manual compaction.
 
 ## Session mapping
 

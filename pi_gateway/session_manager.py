@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from time import monotonic
 from typing import Any
 
@@ -81,10 +82,13 @@ class PiSessionManager:
         client.apply_state(state)
         await self._persist_state(conversation_id, state)
 
-    async def prompt(self, conversation: Conversation, text: str, *, streaming_behavior: str | None = None) -> PromptResult:
+    async def prompt(
+        self, conversation: Conversation, text: str, *,
+        streaming_behavior: str | None = None, on_text: Callable[[str], None] | None = None,
+    ) -> PromptResult:
         async with self.lock_for(conversation.id):
             client = await self.client_for(conversation)
-            result = await client.prompt(text, streaming_behavior=streaming_behavior)
+            result = await client.prompt(text, streaming_behavior=streaming_behavior, on_text=on_text)
             await self._persist_client_state(conversation.id, client, await client.get_state())
             return result
 
