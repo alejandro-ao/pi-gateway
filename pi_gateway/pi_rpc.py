@@ -214,25 +214,34 @@ class PiRpcClient:
             raise PiRpcError(str(response.get("error") or response))
         return response
 
-    async def events_until_agent_end(self, timeout: float | None = None) -> AsyncIterator[dict[str, Any]]:
+    async def events_until_agent_settled(self, timeout: float | None = None) -> AsyncIterator[dict[str, Any]]:
         while True:
             event = await asyncio.wait_for(self._events.get(), timeout=timeout)
             if event.get("type") == RPC_ERROR_EVENT:
                 raise PiRpcError(str(event.get("error") or "pi rpc client failed"))
             yield event
-            if event.get("type") == "agent_end":
+            if event.get("type") == "agent_settled":
                 return
 
     async def prompt(self, message: str, *, streaming_behavior: str | None = None) -> PromptResult:
         payload: dict[str, Any] = {"type": "prompt", "message": message}
         if streaming_behavior:
             payload["streamingBehavior"] = streaming_behavior
+        await self.start()
+        # Old command events (e.g. a manual compact) have no request ID. Drain
+        # them before sending the next prompt, never after: a fast Pi response
+        # may already have queued this prompt's completion by then.
+        self._clear_events()
         await self.request(payload, timeout=60)
         events: list[dict[str, Any]] = []
         final_text = ""
-        async for event in self.events_until_agent_end(timeout=None):
+        async for event in self.events_until_agent_settled(timeout=None):
             events.append(event_without_message_history(event))
-            if event.get("type") == "message_end":
+            if event.get("type") == "agent_start":
+                # Retries after an overflow begin another run. Do not send a
+                # partial answer from the earlier attempt to Telegram.
+                final_text = ""
+            elif event.get("type") == "message_end":
                 msg = event.get("message") or {}
                 if isinstance(msg, dict) and msg.get("role") == "assistant":
                     final_text = content_to_text(msg.get("content")) or final_text
