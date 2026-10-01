@@ -123,7 +123,7 @@ It asks for:
 1. Telegram bot token, or blank for `env:TELEGRAM_BOT_TOKEN`.
 2. Allowed Telegram user ID.
 3. Pi working directory, defaulting to the current directory.
-4. Optional Pi model (`provider/model-id`) and thinking level; blank uses Pi defaults for a new config or retains values for an existing config.
+4. Optional Pi model and thinking level. Setup reads the model catalog from the configured Pi executable (`pi --list-models`) with the configured working/agent directory, then provides a fuzzy-search picker: Tab/arrow keys select, Enter confirms. Empty keeps the current model (or Pi default on new configs); `default` clears a prior model choice. If the catalog cannot be read, manual `provider/model-id` entry remains available. `--model` skips the picker for automation; catalog membership is not an authentication check.
 5. Optional unique gateway name; blank keeps the existing name when updating a config.
 
 Both `init` and `configure telegram` accept `--model` and `--thinking` for non-interactive setup. The model is split at the first `/` into `pi.defaultProvider` and `pi.defaultModel`; `pi.defaultThinking` holds the selected reasoning level. Invalid values are rejected before the config is written.
