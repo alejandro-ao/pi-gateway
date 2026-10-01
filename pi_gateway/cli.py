@@ -7,6 +7,7 @@ import hashlib
 import importlib.metadata
 import logging
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -470,8 +471,9 @@ def start_background(args: argparse.Namespace) -> None:
         pid_file.write_text(str(process.pid), encoding="utf-8")
     print(f"Started pi-gateway in the background with PID {process.pid}")
     print(f"Log: {log_file}")
-    print("Stop with: pi-gateway stop")
-    print("Follow logs with: pi-gateway logs")
+    selected = f"pi-gateway -c {shlex.quote(str(config))}"
+    print(f"Stop with: {selected} stop")
+    print(f"Follow logs with: {selected} logs -f")
 
 
 def stop_background(args: argparse.Namespace) -> None:
@@ -533,6 +535,12 @@ def package_version() -> str:
         return __version__
 
 
+def add_selection_options(parser: argparse.ArgumentParser) -> None:
+    """Allow -c/-i after a command without erasing values given before it."""
+    parser.add_argument("-c", "--config", default=argparse.SUPPRESS, help="Path to config YAML")
+    parser.add_argument("-i", "--instance", default=argparse.SUPPRESS, help="Gateway name or directory")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pi-gateway")
     parser.add_argument("--version", action="version", version=f"pi-gateway {package_version()}")
@@ -541,24 +549,28 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     run = sub.add_parser("run", help="Run the Telegram gateway daemon in the foreground")
-    run.add_argument("-c", "--config", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    add_selection_options(run)
 
     start = sub.add_parser("start", help="Start pi-gateway in the background")
-    start.add_argument("-c", "--config", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    add_selection_options(start)
 
     stop = sub.add_parser("stop", help="Stop a background pi-gateway process")
+    add_selection_options(stop)
     stop.add_argument("--timeout", type=float, default=10, help="Seconds to wait for graceful shutdown")
 
     remove = sub.add_parser("remove", help="Delete a gateway config and unregister it (preserves history)")
+    add_selection_options(remove)
     remove.add_argument("target", nargs="?", help="Registered gateway name; or use -c/-i")
     remove.add_argument("--dry-run", action="store_true", help="Show what would be removed without changing anything")
     remove.add_argument("--stop", action="store_true", help="Stop a running background gateway before removal")
     remove.add_argument("--timeout", type=float, default=10, help="Seconds to wait when using --stop")
     remove.add_argument("--yes", action="store_true", help="Skip interactive confirmation (for automation)")
 
-    sub.add_parser("status", help="Show background process status")
+    status = sub.add_parser("status", help="Show background process status")
+    add_selection_options(status)
 
     logs = sub.add_parser("logs", help="Show pi-gateway log file")
+    add_selection_options(logs)
     logs.add_argument("-n", "--lines", type=int, default=80, help="Number of lines to show")
     logs.add_argument("-f", "--follow", action="store_true", help="Follow log output")
 
@@ -567,6 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     configure_sub = configure.add_subparsers(dest="configure_command")
     telegram = configure_sub.add_parser("telegram", help="Create/update Telegram gateway config")
     telegram.set_defaults(_help_parser=telegram)
+    add_selection_options(telegram)
     telegram.add_argument("--bot-token", help="Telegram bot token. Omit to use env:TELEGRAM_BOT_TOKEN")
     telegram.add_argument("--allowed-user-id", type=int, help="Only accept messages from this Telegram user id")
     telegram.add_argument("--pi-cwd", help="Working directory where Pi should run sessions")
@@ -581,7 +594,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Separate group sessions by sender user id as well as chat/thread",
     )
 
-    sub.add_parser("config-path", help="Print the effective config path")
+    config_path = sub.add_parser("config-path", help="Print the effective config path")
+    add_selection_options(config_path)
     instances = sub.add_parser("instances", help="List registered gateway instances")
     instances_sub = instances.add_subparsers(dest="instances_command")
     forget = instances_sub.add_parser("forget", help="Remove a stopped gateway from the registry")

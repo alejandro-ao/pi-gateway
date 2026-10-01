@@ -91,7 +91,7 @@ class RemoveGatewayTest(unittest.TestCase):
         # An old path-only registry entry has no name; -c still targets it.
         registry = cli.expand_path(cli.REGISTRY_PATH)
         registry.write_text(json.dumps([str(self.first), str(self.second)]))
-        cli.remove_gateway(self.parse("-c", str(self.first), "remove", "--yes"))
+        cli.remove_gateway(self.parse("remove", "-c", str(self.first), "--yes"))
         self.assertFalse(self.first.exists())
         self.assertTrue(self.second.exists())
         self.assertEqual(self.names(), [None])

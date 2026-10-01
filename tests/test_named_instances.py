@@ -53,9 +53,9 @@ class NamedInstancesTest(unittest.TestCase):
         with patch.object(cli.subprocess, "Popen") as popen, patch.object(cli.sys, "argv", ["pi-gateway"]):
             for index, name in enumerate(("research", "coding")):
                 popen.return_value.pid = 100 + index
-                cli.start_background(self.parse("-i", name, "start"))
+                cli.start_background(self.parse("start", "-i", name))
         with patch.object(cli.os, "kill") as kill:
-            cli.stop_background(self.parse("-i", "coding", "stop", "--timeout", "0"))
+            cli.stop_background(self.parse("stop", "-i", "coding", "--timeout", "0"))
             self.assertIn((101, cli.signal.SIGTERM), [call.args for call in kill.call_args_list])
             self.assertNotIn(100, [call.args[0] for call in kill.call_args_list])
         output = StringIO()

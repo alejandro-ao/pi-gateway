@@ -1,9 +1,12 @@
 import argparse
 import json
 import os
+import shlex
 import signal
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -72,13 +75,30 @@ class LocalInstancesTest(unittest.TestCase):
         cli.init_instance(self.args(bot_token="abc"))
         config = cli.local_config()
         args = self.args()
-        with patch.object(cli.subprocess, "Popen") as popen, patch.object(cli.sys, "argv", ["pi-gateway"]):
+        output = StringIO()
+        with patch.object(cli.subprocess, "Popen") as popen, patch.object(cli.sys, "argv", ["pi-gateway"]), redirect_stdout(output):
             popen.return_value.pid = 42
             cli.start_background(args)
             popen.assert_called_once()
             self.assertEqual(popen.call_args.args[0], ["pi-gateway", "run", "--config", str(config)])
+        selected = f"pi-gateway -c {shlex.quote(str(config))}"
+        self.assertIn(f"Stop with: {selected} stop", output.getvalue())
+        self.assertIn(f"Follow logs with: {selected} logs -f", output.getvalue())
         self.assertEqual(cli.instance_state(config)[0].read_text(), "42")
         self.assertTrue(cli.instance_state(config)[1].is_file())
+
+    def test_start_in_directory_with_spaces_quotes_selected_config(self):
+        folder = self.root / "bot workspace"
+        folder.mkdir()
+        os.chdir(folder)
+        cli.init_instance(self.args(bot_token="fake:token"))
+        output = StringIO()
+        with patch.object(cli.subprocess, "Popen") as popen, patch.object(cli.sys, "argv", ["pi-gateway"]), redirect_stdout(output):
+            popen.return_value.pid = 42
+            cli.start_background(self.args())
+        selector = f"pi-gateway -c {shlex.quote(str(cli.local_config()))}"
+        self.assertIn(f"Stop with: {selector} stop", output.getvalue())
+        self.assertIn(f"Follow logs with: {selector} logs -f", output.getvalue())
 
     def test_explicit_configs_in_same_directory_have_separate_state(self):
         os.chdir(self.root)
@@ -124,6 +144,17 @@ class LocalInstancesTest(unittest.TestCase):
         self.assertEqual(parser.parse_args(["-c", "/tmp/a", "run"]).config, "/tmp/a")
         self.assertEqual(parser.parse_args(["run", "-c", "/tmp/a"]).config, "/tmp/a")
         self.assertEqual(parser.parse_args(["-i", "/tmp/b", "status"]).instance, "/tmp/b")
+        for command in ("run", "start", "stop", "status", "logs", "remove", "config-path"):
+            with self.subTest(command=command):
+                self.assertEqual(parser.parse_args([command, "-i", "bunny"]).instance, "bunny")
+                self.assertEqual(parser.parse_args([command, "-c", "/tmp/a.yaml"]).config, "/tmp/a.yaml")
+                self.assertEqual(parser.parse_args(["-i", "bunny", command]).instance, "bunny")
+                self.assertEqual(parser.parse_args(["-c", "/tmp/a.yaml", command]).config, "/tmp/a.yaml")
+        self.assertEqual(parser.parse_args(["configure", "telegram", "-c", "/tmp/a.yaml"]).config, "/tmp/a.yaml")
+        self.assertEqual(parser.parse_args(["-i", "bunny", "configure", "telegram"]).instance, "bunny")
+        self.assertEqual(parser.parse_args(["start", "-i", "bunny", "-c", "/tmp/a.yaml"]).config, "/tmp/a.yaml")
+        self.assertEqual(parser.parse_args(["-c", "/tmp/a.yaml", "start", "-i", "bunny"]).config, "/tmp/a.yaml")
+        self.assertEqual(parser.parse_args(["-i", "old", "start", "-i", "new"]).instance, "new")
 
     def test_pi_agent_dir_config(self):
         os.chdir(self.root)

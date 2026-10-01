@@ -81,11 +81,11 @@ Initialize a local instance in the Pi working directory:
 ```bash
 pi-gateway init --name research
 pi-gateway instances
-pi-gateway -i research status
+pi-gateway status -i research
 pi-gateway remove research --dry-run  # preview config-only deletion
 ```
 
-`configure telegram` also creates/updates a local config by default. `init` and `configure telegram` accept optional `--name` for a unique gateway identifier; the registry indexes all configured bots (including custom `-c` files), and `-i` accepts names or bot directories. Both commands also accept optional `--model provider/model-id` and `--thinking <level>` for Pi startup defaults; interactive setup prompts for them as well. Existing values are retained when omitted. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local state (config, DB, PID, log) belongs in `.pi-gateway/`; add that directory to bot projects' `.gitignore`.
+`configure telegram` also creates/updates a local config by default. `init` and `configure telegram` accept optional `--name` for a unique gateway identifier; the registry indexes all configured bots (including custom `-c` files), and `-i` accepts names or bot directories. Both commands also accept optional `--model provider/model-id` and `--thinking <level>` for Pi startup defaults; interactive setup prompts for them as well. Existing values are retained when omitted. `-c` and `-i` work before or after runtime subcommands; `start` must print bot-specific stop/log commands using the resolved absolute config path. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local state (config, DB, PID, log) belongs in `.pi-gateway/`; add that directory to bot projects' `.gitignore`.
 
 ## Repository Structure
 
