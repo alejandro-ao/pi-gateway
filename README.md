@@ -135,7 +135,7 @@ pi-gateway -c config.yaml run
 pi-gateway run -c config.yaml
 ```
 
-Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history.
+Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history. If you previously ran an explicit `-c` config without `databasePath`, set `databasePath` to the old `pi-gateway.sqlite3` file before upgrading to retain its conversation mappings.
 
 Development checkout:
 
