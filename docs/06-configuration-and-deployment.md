@@ -60,6 +60,9 @@ It asks for:
 1. Telegram bot token.
 2. Allowed Telegram user id.
 3. Pi working directory.
+4. Optional Pi model (`provider/model-id`) and thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
+
+For automation use `pi-gateway init --model anthropic/claude-sonnet-4-5 --thinking high --allowed-user-id 123456789`, or pass the same flags to `configure telegram`. Pi must support and have credentials for the selected model; `pi --list-models` lists its model catalog. Omit these choices to use Pi defaults, or to retain existing gateway defaults on reconfiguration. Restart running gateways after changing their config.
 
 The allowed user id is important. Without it, anyone who finds your bot could talk to it.
 
@@ -79,6 +82,10 @@ telegram:
 pi:
   command: pi
   cwd: /home/agent/pi-workspace
+  # Optional per-gateway Pi startup defaults:
+  defaultProvider: anthropic
+  defaultModel: claude-sonnet-4-5
+  defaultThinking: high
   idleTtlSeconds: 1800
   rpcStreamLimit: 16777216
   extraArgs: []

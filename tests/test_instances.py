@@ -26,7 +26,7 @@ class LocalInstancesTest(unittest.TestCase):
 
     def args(self, **kwargs):
         values = dict(config=None, instance=None, bot_token=None, allowed_user_id=123,
-                      pi_cwd=None, pi_agent_dir=None, allow_groups=False,
+                      pi_cwd=None, pi_agent_dir=None, model=None, thinking=None, allow_groups=False,
                       include_user_in_group_session_key=False)
         values.update(kwargs)
         return argparse.Namespace(**values)

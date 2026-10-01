@@ -15,7 +15,9 @@ pi:
   cwd: ~/pi-workspace
   # Optional. Leave unset to use Pi's default ~/.pi/agent/sessions.
   # sessionDir: ~/.pi/agent/sessions
-  # defaultModel: anthropic/claude-sonnet-4-5
+  # Optional Pi startup defaults (also set with init/configure flags):
+  # defaultProvider: anthropic
+  # defaultModel: claude-sonnet-4-5
   # defaultThinking: medium
   idleTtlSeconds: 1800
   # Maximum bytes for one stdout/stderr RPC frame from Pi. Can also be set

@@ -39,6 +39,8 @@ It may also include:
 --thinking <level>
 ```
 
+The optional `pi.defaultProvider`, `pi.defaultModel`, and `pi.defaultThinking` in the gateway YAML config supply these startup flags. `init` and `configure telegram` can set them interactively or with `--model provider/model-id --thinking <level>`. The defaults apply when a Pi RPC subprocess starts; model/thinking changes made in an active Pi session are managed by Pi and may take precedence when that session resumes.
+
 The child process runs with cwd from config:
 
 ```yaml
