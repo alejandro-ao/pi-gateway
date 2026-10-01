@@ -47,7 +47,7 @@ pi:
 
 ## Instance Config Paths
 
-`pi-gateway init` or `pi-gateway configure telegram` creates `.pi-gateway/config.yaml` in the current directory. Local configs take priority over the legacy `~/.config/pi-gateway/config.yaml` for subsequent commands. `pi-gateway config-path` shows the selected path. Use `-c /path/to/config.yaml` for an explicit file or `-i /path/to/bot-directory` to manage an initialized instance elsewhere. Add `.pi-gateway/` to `.gitignore` in each bot project; configuration can contain secrets. `pi-gateway instances` lists registered bot directories and their process status.
+`pi-gateway init` or `pi-gateway configure telegram` creates `.pi-gateway/config.yaml` in the current directory. Local configs take priority over the legacy `~/.config/pi-gateway/config.yaml` for subsequent commands. `pi-gateway config-path` shows the selected path. Use `-c /path/to/config.yaml` for an explicit file or `-i /path/to/bot-directory` to manage an initialized instance elsewhere. Add `.pi-gateway/` to `.gitignore` in each bot project; configuration can contain secrets. `pi-gateway instances` lists all configured bots, including custom `-c` files, with their optional names and process status. `pi-gateway -i <name> stop` targets one bot from anywhere; `-i <directory>` still works for standard local configs. `pi-gateway instances forget <name>` unregisters a stopped bot without deleting its config or database.
 
 ## Interactive Telegram Setup
 
@@ -61,6 +61,7 @@ It asks for:
 2. Allowed Telegram user id.
 3. Pi working directory.
 4. Optional Pi model (`provider/model-id`) and thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
+5. Optional unique gateway name, also accepted as `--name` on `init` or `configure telegram`. A name identifies the gateway config, not a Pi session; renaming it never moves its database or PID/log files.
 
 For automation use `pi-gateway init --model anthropic/claude-sonnet-4-5 --thinking high --allowed-user-id 123456789`, or pass the same flags to `configure telegram`. Pi must support and have credentials for the selected model; `pi --list-models` lists its model catalog. Omit these choices to use Pi defaults, or to retain existing gateway defaults on reconfiguration. Restart running gateways after changing their config.
 
@@ -69,6 +70,7 @@ The allowed user id is important. Without it, anyone who finds your bot could ta
 ## Example Config
 
 ```yaml
+instanceName: research
 databasePath: ~/.local/share/pi-gateway/pi-gateway.sqlite3
 logLevel: INFO
 

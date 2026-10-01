@@ -23,6 +23,7 @@ Pi Gateway is a small Python daemon that connects Telegram to persistent Pi codi
 | `pi_gateway/cli.py` | CLI entry point, configuration wizard, foreground/background process commands |
 | `pi_gateway/config.py` | YAML/env config loading and typed config objects |
 | `pi_gateway/db.py` | SQLite schema and conversation/message persistence |
+| `pi_gateway/instance_registry.py` | Per-user index mapping gateway names to config paths |
 | `pi_gateway/telegram_bot.py` | Telegram bot adapter and Telegram command handling |
 | `pi_gateway/session_manager.py` | Caches and serializes per-conversation Pi RPC clients |
 | `pi_gateway/pi_rpc.py` | JSONL RPC client for spawned `pi --mode rpc` processes |

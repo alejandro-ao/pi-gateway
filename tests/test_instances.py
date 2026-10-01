@@ -26,7 +26,7 @@ class LocalInstancesTest(unittest.TestCase):
 
     def args(self, **kwargs):
         values = dict(config=None, instance=None, bot_token=None, allowed_user_id=123,
-                      pi_cwd=None, pi_agent_dir=None, model=None, thinking=None, allow_groups=False,
+                      pi_cwd=None, pi_agent_dir=None, model=None, thinking=None, name=None, allow_groups=False,
                       include_user_in_group_session_key=False)
         values.update(kwargs)
         return argparse.Namespace(**values)
@@ -48,7 +48,9 @@ class LocalInstancesTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 cli.init_instance(self.args())
         registry = json.loads(cli.expand_path(cli.REGISTRY_PATH).read_text())
-        self.assertEqual(registry, list(map(str, configs)))
+        self.assertEqual(registry, {"version": 2, "instances": [
+            {"name": None, "config": str(config)} for config in configs
+        ]})
         os.chdir(self.root)
         self.assertEqual(cli.resolve_config(self.args()), cli.expand_path(cli.DEFAULT_CONFIG_PATH))
         for folder, config in zip(folders, configs):

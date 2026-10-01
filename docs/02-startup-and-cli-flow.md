@@ -17,8 +17,9 @@ pi-gateway status              # show background status
 pi-gateway logs [-f]           # read/follow log file
 pi-gateway configure telegram  # interactive config wizard
 pi-gateway init                # create local instance and configure Telegram
-pi-gateway instances           # list initialized local instances
-pi-gateway -i <directory> status  # manage a bot from elsewhere
+pi-gateway instances           # list registered instances (including custom -c configs)
+pi-gateway instances forget <name>  # unregister stopped bot without deleting files
+pi-gateway -i <name|directory> status  # manage a bot from elsewhere
 pi-gateway config-path         # print selected config path
 ```
 
@@ -68,6 +69,8 @@ It does not implement a full supervisor. It:
 4. Spawns `pi-gateway run` with stdout/stderr redirected to the log.
 5. Writes the child PID to the PID file.
 
+A user-supplied gateway name resolves through the per-user registry to an absolute config path; `-c` remains an explicit override. Names do not alter Pi sessions, SQLite paths, or PID/log locations.
+
 ```text
 pi-gateway start
   ↓
@@ -116,10 +119,11 @@ It asks for:
 2. Allowed Telegram user ID.
 3. Pi working directory, defaulting to the current directory.
 4. Optional Pi model (`provider/model-id`) and thinking level; blank uses Pi defaults for a new config or retains values for an existing config.
+5. Optional unique gateway name; blank keeps the existing name when updating a config.
 
 Both `init` and `configure telegram` accept `--model` and `--thinking` for non-interactive setup. The model is split at the first `/` into `pi.defaultProvider` and `pi.defaultModel`; `pi.defaultThinking` holds the selected reasoning level. Invalid values are rejected before the config is written.
 
-`init` refuses to overwrite an existing local config. `configure telegram` creates or updates `.pi-gateway/config.yaml` in the current directory unless `-c`/`-i` is supplied. Existing global configs remain the fallback for runtime commands when no local config exists. The registry at `~/.config/pi-gateway/instances.json` stores absolute local config paths for `instances`; missing configs are reported, not deleted.
+`init` refuses to overwrite an existing local config. `configure telegram` creates or updates `.pi-gateway/config.yaml` in the current directory unless `-c`/`-i` is supplied. Both accept `--name` to set or rename `instanceName` in that YAML file. Existing global configs remain the fallback for runtime commands when no local config exists. The registry at `~/.config/pi-gateway/instances.json` indexes *all* configured gateway files by name/path; old path-only registries are migrated on read. Registration and uniqueness checks use a file lock so a duplicate name cannot overwrite an existing entry. Missing configs are shown as missing, not silently removed; `instances forget <name>` unregisters a stopped gateway without deleting its files.
 
 ## Important Code Locations
 

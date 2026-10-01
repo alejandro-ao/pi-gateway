@@ -60,20 +60,20 @@ class ModelSetupTest(unittest.TestCase):
     def test_interactive_prompts_validate_and_preserve_existing_defaults(self):
         args = self.parse("init", "--allowed-user-id", "123", "--bot-token", "env:BOT_TOKEN")
         with patch.object(cli.sys.stdin, "isatty", return_value=True), patch(
-            "builtins.input", side_effect=[str(self.root), "bad-model", "anthropic/claude-sonnet-4-5", "invalid", "high"]
+            "builtins.input", side_effect=[str(self.root), "bad-model", "anthropic/claude-sonnet-4-5", "invalid", "high", ""]
         ):
             cli.init_instance(args)
         pi = load_config(str(cli.local_config())).pi
         self.assertEqual((pi.default_provider, pi.default_model, pi.default_thinking), ("anthropic", "claude-sonnet-4-5", "high"))
 
-        with patch.object(cli.sys.stdin, "isatty", return_value=True), patch("builtins.input", side_effect=["", "", "", "", ""]):
+        with patch.object(cli.sys.stdin, "isatty", return_value=True), patch("builtins.input", side_effect=["", "", "", "", "", ""]):
             cli.configure_telegram(self.parse("configure", "telegram"))
         pi = load_config(str(cli.local_config())).pi
         self.assertEqual((pi.default_provider, pi.default_model, pi.default_thinking), ("anthropic", "claude-sonnet-4-5", "high"))
 
     def test_empty_prompts_keep_pi_defaults(self):
         with patch.object(cli.sys.stdin, "isatty", return_value=True), patch(
-            "builtins.input", side_effect=["", "123", str(self.root), "", ""]
+            "builtins.input", side_effect=["", "123", str(self.root), "", "", ""]
         ):
             cli.init_instance(self.parse("init"))
         pi = load_config(str(cli.local_config())).pi
