@@ -122,9 +122,9 @@ pi-gateway logs -f
 pi-gateway stop
 ```
 
-Repeat `init` and `start` in other directories to run multiple bots concurrently. From anywhere, use `pi-gateway instances` to list all configured bots and `pi-gateway -i research status` (or `start`, `stop`, `logs`) to manage one by name. `-i ~/bots/my-bot` still selects a bot directory, and `-c <config-file>` always takes precedence. Bare `pi-gateway stop` still selects the local config; it never guesses among bots. For production, use one systemd service per bot with its working directory set to the bot directory.
+Repeat `init` and `start` in other directories to run multiple bots concurrently. From anywhere, use `pi-gateway instances` to list all configured bots and `pi-gateway status -i research` (or `start`, `stop`, `logs`) to manage one by name. Instance selection flags can appear before or after these commands: `pi-gateway -i research start` and `pi-gateway start -i research` are equivalent. `-i ~/bots/my-bot` still selects a bot directory, and `-c <config-file>` always takes precedence. Bare `pi-gateway stop` still selects the local config; it never guesses among bots. For production, use one systemd service per bot with its working directory set to the bot directory.
 
-`start` writes logs to:
+`start` prints stop and log commands containing the selected config's absolute path, so they target the same bot even when run from another directory. It writes logs to:
 
 ```text
 .pi-gateway/pi-gateway.log (local instances) or ~/.local/state/pi-gateway/pi-gateway.log (legacy config)
@@ -153,7 +153,7 @@ pi-gateway remove research --dry-run  # Show the exact config path; change nothi
 pi-gateway remove research            # Confirm interactively (stopped bots only)
 pi-gateway remove research --stop --yes  # Stop a background bot, then remove; for automation
 # Unnamed bots can be selected explicitly by their config path:
-pi-gateway -c /absolute/path/to/bot.yaml remove --yes
+pi-gateway remove -c /absolute/path/to/bot.yaml --yes
 ```
 
 `remove` never deletes SQLite databases, logs, directories, or Pi session files. `--stop` handles bots started with `pi-gateway start`; stop foreground or systemd-managed bots through their supervisor before removing them. If a bot fails to stop within 10 seconds, its config is kept. After removal, commands run from its former directory may fall back to the legacy global config, so target other bots by name or `-c`. Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history. If you previously ran an explicit `-c` config without `databasePath`, set `databasePath` to the old `pi-gateway.sqlite3` file before upgrading to retain its conversation mappings.

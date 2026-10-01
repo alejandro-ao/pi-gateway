@@ -20,7 +20,7 @@ pi-gateway init                # create local instance and configure Telegram
 pi-gateway instances           # list registered instances (including custom -c configs)
 pi-gateway instances forget <name>  # unregister stopped bot without deleting files
 pi-gateway remove <name> [--dry-run|--stop|--yes]  # delete only its config
-pi-gateway -i <name|directory> status  # manage a bot from elsewhere
+pi-gateway status -i <name|directory>  # manage a bot from elsewhere
 pi-gateway config-path         # print selected config path
 ```
 
@@ -70,7 +70,7 @@ It does not implement a full supervisor. It:
 4. Spawns `pi-gateway run` with stdout/stderr redirected to the log.
 5. Writes the child PID to the PID file.
 
-A user-supplied gateway name resolves through the per-user registry to an absolute config path; `-c` remains an explicit override. Names do not alter Pi sessions, SQLite paths, or PID/log locations.
+A user-supplied gateway name resolves through the per-user registry to an absolute config path; `-c` remains an explicit override. Names do not alter Pi sessions, SQLite paths, or PID/log locations. `start` prints exact stop/log commands with the resolved absolute config path so they remain correct from another directory. Both `-c` and `-i` can appear before or after `run`, `start`, `stop`, `status`, `logs`, `remove`, and `config-path`, or after `configure telegram`. Their subparser defaults are suppressed so a flag before the command is not overwritten; `-c` takes priority over `-i` when both are supplied.
 
 ```text
 pi-gateway start
@@ -100,7 +100,7 @@ The daemon catches SIGTERM in `run_gateway()`, which lets it send the Telegram d
 
 ## Safe Removal
 
-`pi-gateway remove <name>` (or `pi-gateway -c /path/to/config.yaml remove` for an unnamed bot) resolves only a registered config. It prints the exact config path and status, refuses a live background PID unless `--stop` is given, and asks for confirmation unless `--yes` is passed. `--dry-run` never stops or deletes anything. On `--stop`, removal checks again that the background PID is no longer running before unlinking the config. A shared registry lock serializes background starts, registration, and removal to prevent starting a config while it is being removed. Foreground and systemd processes are not tracked by the background PID file and must be stopped separately. SQLite data, logs, Pi sessions, and parent directories are preserved. `instances forget` remains the non-deleting alternative.
+`pi-gateway remove <name>` (or `pi-gateway remove -c /path/to/config.yaml` for an unnamed bot) resolves only a registered config. It prints the exact config path and status, refuses a live background PID unless `--stop` is given, and asks for confirmation unless `--yes` is passed. `--dry-run` never stops or deletes anything. On `--stop`, removal checks again that the background PID is no longer running before unlinking the config. A shared registry lock serializes background starts, registration, and removal to prevent starting a config while it is being removed. Foreground and systemd processes are not tracked by the background PID file and must be stopped separately. SQLite data, logs, Pi sessions, and parent directories are preserved. `instances forget` remains the non-deleting alternative.
 
 ## Logs Flow: `logs`
 
