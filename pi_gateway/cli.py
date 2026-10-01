@@ -32,6 +32,7 @@ DEFAULT_STATE_DIR = "~/.local/state/pi-gateway"
 DEFAULT_PID_PATH = f"{DEFAULT_STATE_DIR}/pi-gateway.pid"
 DEFAULT_LOG_PATH = f"{DEFAULT_STATE_DIR}/pi-gateway.log"
 _HELD_LOCK_FILES: list[Any] = []
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 def acquire_bot_token_lock(bot_token: str) -> None:
@@ -210,6 +211,13 @@ def _prompt_int(message: str, *, default: int | None = None, required: bool = Fa
             print("Please enter a numeric Telegram user id.")
 
 
+def parse_model(value: str) -> tuple[str, str]:
+    provider, separator, model_id = value.partition("/")
+    if not separator or not provider or not model_id or any(char.isspace() for char in value):
+        raise ValueError("Model must be <provider>/<model-id> (see `pi --list-models`).")
+    return provider, model_id
+
+
 def configure_telegram(args: argparse.Namespace) -> None:
     path = resolve_config(args, creating=True)
     data = load_raw_config(path)
@@ -273,6 +281,44 @@ def configure_telegram(args: argparse.Namespace) -> None:
         pi["cwd"] = existing_cwd
     if args.pi_agent_dir:
         pi["agentDir"] = str(expand_path(args.pi_agent_dir))
+
+    model = args.model
+    if model == "":
+        raise ValueError("Model must be <provider>/<model-id> (see `pi --list-models`).")
+    if model is None and interactive:
+        print("\nPi model setup (optional; run `pi --list-models` to see model IDs).")
+        current_model = (
+            f"{pi['defaultProvider']}/{pi['defaultModel']}"
+            if pi.get("defaultProvider") and pi.get("defaultModel")
+            else None
+        )
+        while True:
+            model = _prompt("Model (provider/model-id; blank for Pi default)", default=current_model)
+            if not model:
+                break
+            try:
+                parse_model(model)
+                break
+            except ValueError as exc:
+                print(exc)
+    if model:
+        pi["defaultProvider"], pi["defaultModel"] = parse_model(model)
+
+    thinking = args.thinking
+    if thinking == "":
+        raise ValueError(f"Thinking level must be one of: {', '.join(THINKING_LEVELS)}")
+    if thinking is None and interactive:
+        while True:
+            thinking = _prompt("Thinking level (blank for Pi default)", default=pi.get("defaultThinking"))
+            if not thinking or thinking.lower() in THINKING_LEVELS:
+                break
+            print(f"Choose one of: {', '.join(THINKING_LEVELS)}")
+    if thinking:
+        thinking = thinking.lower()
+        if thinking not in THINKING_LEVELS:
+            raise ValueError(f"Thinking level must be one of: {', '.join(THINKING_LEVELS)}")
+        pi["defaultThinking"] = thinking
+
     pi.setdefault("idleTtlSeconds", 1800)
     pi.setdefault("extraArgs", [])
 
@@ -447,6 +493,8 @@ def build_parser() -> argparse.ArgumentParser:
     telegram.add_argument("--allowed-user-id", type=int, help="Only accept messages from this Telegram user id")
     telegram.add_argument("--pi-cwd", help="Working directory where Pi should run sessions")
     telegram.add_argument("--pi-agent-dir", help="Optional isolated Pi agent directory for global skills and credentials")
+    telegram.add_argument("--model", help="Pi startup model as provider/model-id (omit to use Pi's default)")
+    telegram.add_argument("--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}")
     telegram.add_argument("--allow-groups", action="store_true", help="Allow the bot in group chats")
     telegram.add_argument(
         "--include-user-in-group-session-key",
@@ -461,6 +509,8 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--allowed-user-id", type=int)
     init.add_argument("--pi-cwd")
     init.add_argument("--pi-agent-dir")
+    init.add_argument("--model", help="Pi startup model as provider/model-id")
+    init.add_argument("--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}")
     init.add_argument("--allow-groups", action="store_true")
     init.add_argument("--include-user-in-group-session-key", action="store_true")
     return parser

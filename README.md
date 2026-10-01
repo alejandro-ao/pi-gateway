@@ -65,15 +65,19 @@ Set a distinct bot token and allowed user ID for each instance. Each bot needs i
 pi-gateway configure telegram
 ```
 
-It will ask for your BotFather token, your allowed Telegram user id, and the Pi working directory.
+It will ask for your BotFather token, your allowed Telegram user id, the Pi working directory, and optionally a Pi model and thinking level. Leave the model and thinking prompts blank to use Pi's defaults; when updating an existing config, blank keeps the current selections. Run `pi --list-models` to see model IDs (listed models may still require authentication).
 
 You can also configure non-interactively:
 
 ```bash
 pi-gateway configure telegram \
   --allowed-user-id YOUR_TELEGRAM_USER_ID \
-  --pi-cwd /home/agent/pi-workspace
+  --pi-cwd /home/agent/pi-workspace \
+  --model anthropic/claude-sonnet-4-5 \
+  --thinking high
 ```
+
+`pi-gateway init` accepts the same `--model` and `--thinking` flags. Model IDs may contain additional `/` characters (for example, `huggingface/org/model-id`); the first part is the provider. Thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Omitted flags leave existing settings unchanged. The defaults are stored per gateway in `.pi-gateway/config.yaml` (or your explicit `-c` file) as `pi.defaultProvider`, `pi.defaultModel`, and `pi.defaultThinking`; they apply to new Pi RPC processes. Existing Pi sessions can have their own model/thinking settings; use Telegram `/model` and `/thinking` for an active session. Restart a running gateway to pick up config edits.
 
 By default the bot token can be read from `TELEGRAM_BOT_TOKEN`. You can also write it into the config:
 

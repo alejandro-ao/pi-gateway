@@ -115,6 +115,9 @@ It asks for:
 1. Telegram bot token, or blank for `env:TELEGRAM_BOT_TOKEN`.
 2. Allowed Telegram user ID.
 3. Pi working directory, defaulting to the current directory.
+4. Optional Pi model (`provider/model-id`) and thinking level; blank uses Pi defaults for a new config or retains values for an existing config.
+
+Both `init` and `configure telegram` accept `--model` and `--thinking` for non-interactive setup. The model is split at the first `/` into `pi.defaultProvider` and `pi.defaultModel`; `pi.defaultThinking` holds the selected reasoning level. Invalid values are rejected before the config is written.
 
 `init` refuses to overwrite an existing local config. `configure telegram` creates or updates `.pi-gateway/config.yaml` in the current directory unless `-c`/`-i` is supplied. Existing global configs remain the fallback for runtime commands when no local config exists. The registry at `~/.config/pi-gateway/instances.json` stores absolute local config paths for `instances`; missing configs are reported, not deleted.
 
