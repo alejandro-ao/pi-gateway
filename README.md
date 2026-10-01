@@ -13,19 +13,19 @@ See [`docs/`](docs/README.md) for architecture, startup flow, Telegram gateway i
 Directly from GitHub (no clone needed):
 
 ```bash
-uv tool install git+https://github.com/YOUR_USERNAME/pi-gateway.git
+uv tool install git+https://github.com/alejandro-ao/pi-gateway.git
 ```
 
 Install a specific tag or branch:
 
 ```bash
-uv tool install git+https://github.com/YOUR_USERNAME/pi-gateway.git@v0.1.0
+uv tool install git+https://github.com/alejandro-ao/pi-gateway.git@v0.2.0
 ```
 
 Upgrade later:
 
 ```bash
-uv tool install --force git+https://github.com/YOUR_USERNAME/pi-gateway.git
+uv tool install --force git+https://github.com/alejandro-ao/pi-gateway.git
 # or
 uv tool upgrade pi-gateway
 ```
@@ -41,6 +41,9 @@ Or for development:
 ```bash
 uv sync
 uv run pi-gateway --help
+uv run ruff check .
+uv run mypy pi_gateway tests
+uv run pytest -q
 ```
 
 Pi must already be installed and authenticated on the machine as the same user that runs the gateway.

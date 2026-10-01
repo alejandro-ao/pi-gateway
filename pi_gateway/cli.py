@@ -239,6 +239,7 @@ def configure_telegram(args: argparse.Namespace) -> None:
 
     existing_ids = telegram.get("allowedUserIds") or []
     existing_id = int(existing_ids[0]) if existing_ids else None
+    allowed_user_id: int | None
     if args.allowed_user_id is not None:
         allowed_user_id = int(args.allowed_user_id)
     elif interactive:
