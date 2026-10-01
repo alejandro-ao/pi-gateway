@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import secrets
 from pathlib import Path
 from time import monotonic
@@ -70,6 +71,7 @@ class DraftPreview:
         self.thread_id = thread_id
         self.draft_id = secrets.randbelow(2**31 - 1) + 1
         self.text = ""
+        self.tools: dict[str, str] = {}
         self.changed = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.closed = False
@@ -82,6 +84,27 @@ class DraftPreview:
         if self.task is None:
             self.task = asyncio.create_task(self._send(), name="telegram-draft-preview")
 
+    def update_tool(self, tool_id: str | None, tool_name: str | None) -> None:
+        if self.closed:
+            return
+        if tool_id is None:
+            self.tools.clear()  # A new agent attempt must not retain old tool activity.
+        elif tool_name is None:
+            self.tools.pop(tool_id, None)
+        else:
+            # Extension-defined names are untrusted: never show args/results or control characters.
+            self.tools[tool_id] = tool_name if re.fullmatch(r"[A-Za-z0-9_-]{1,48}", tool_name) else "tool"
+        self.changed.set()
+        if self.task is None:
+            self.task = asyncio.create_task(self._send(), name="telegram-draft-preview")
+
+    def _display_text(self) -> str:
+        if not self.tools:
+            return self.text
+        activity = f"🔧 Running {next(reversed(self.tools.values()))}…"
+        separator = "\n\n" if self.text else ""
+        return self.text[:TELEGRAM_LIMIT - len(separator) - len(activity)] + separator + activity
+
     async def _send(self) -> None:
         last_text: str | None = None
         last_time = 0.0
@@ -89,11 +112,11 @@ class DraftPreview:
             while True:
                 await self.changed.wait()
                 self.changed.clear()
-                if not self.text and last_text is None:
-                    continue  # Keep the working message until there is real text.
+                if not self.text and not self.tools and last_text is None:
+                    continue  # Keep the working message until there is text or tool activity.
                 if last_time:
                     await asyncio.sleep(max(0, 0.8 - (monotonic() - last_time)))
-                text = self.text
+                text = self._display_text()
                 if text == last_text:
                     continue
                 await self.bot.send_message_draft(
@@ -339,7 +362,8 @@ class TelegramGateway:
         )
         try:
             result = await self.sessions.prompt(
-                conv, text, streaming_behavior=streaming_behavior, on_text=preview.update if preview else None,
+                conv, text, streaming_behavior=streaming_behavior,
+                on_text=preview.update if preview else None, on_tool=preview.update_tool if preview else None,
             )
         finally:
             if preview:

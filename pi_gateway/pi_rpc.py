@@ -226,6 +226,7 @@ class PiRpcClient:
 
     async def prompt(
         self, message: str, *, streaming_behavior: str | None = None, on_text: Callable[[str], None] | None = None,
+        on_tool: Callable[[str | None, str | None], None] | None = None,
     ) -> PromptResult:
         payload: dict[str, Any] = {"type": "prompt", "message": message}
         if streaming_behavior:
@@ -248,6 +249,8 @@ class PiRpcClient:
                 preview_text = ""
                 if on_text:
                     on_text("")
+                if on_tool:
+                    on_tool(None, None)  # Discard any tools from a failed attempt.
             elif event.get("type") == "message_start":
                 msg = event.get("message")
                 if isinstance(msg, dict) and msg.get("role") == "assistant":
@@ -261,6 +264,14 @@ class PiRpcClient:
                     if new_text != preview_text:
                         preview_text = new_text
                         on_text(preview_text)
+            elif event.get("type") == "tool_execution_start":
+                tool_id, tool_name = event.get("toolCallId"), event.get("toolName")
+                if on_tool and isinstance(tool_id, str) and isinstance(tool_name, str):
+                    on_tool(tool_id, tool_name)  # Never expose args or results.
+            elif event.get("type") == "tool_execution_end":
+                tool_id = event.get("toolCallId")
+                if on_tool and isinstance(tool_id, str):
+                    on_tool(tool_id, None)
             elif event.get("type") == "message_end":
                 msg = event.get("message") or {}
                 if isinstance(msg, dict) and msg.get("role") == "assistant":

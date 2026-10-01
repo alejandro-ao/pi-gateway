@@ -39,6 +39,30 @@ class DraftPreviewTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.kwargs["draft_id"], cleared.kwargs["draft_id"])
         await preview.close()
 
+    async def test_tool_activity_is_temporary_and_names_are_sanitized(self):
+        bot = SimpleNamespace(send_message_draft=AsyncMock())
+        working = SimpleNamespace(delete=AsyncMock())
+        preview = DraftPreview(bot, 123, working)
+        with patch("pi_gateway.telegram_bot.monotonic", side_effect=[2.0, 4.0, 6.0, 8.0]):
+            preview.update_tool("call-1", "bash")
+            await asyncio.wait_for(self._wait_for_calls(bot.send_message_draft, 1), 1)
+            self.assertEqual(bot.send_message_draft.call_args.kwargs["text"], "🔧 Running bash…")
+            working.delete.assert_awaited_once()
+            preview.update_tool("call-1", None)
+            await asyncio.wait_for(self._wait_for_calls(bot.send_message_draft, 2), 1)
+            self.assertEqual(bot.send_message_draft.call_args.kwargs["text"], "")
+        preview.update("a" * 4096)
+        preview.update_tool("call-2", "bash\nsecret")
+        self.assertTrue(preview._display_text().endswith("🔧 Running tool…"))
+        self.assertEqual(len(preview._display_text()), 4096)
+        preview.update_tool("call-3", "read")
+        self.assertTrue(preview._display_text().endswith("🔧 Running read…"))
+        preview.update_tool("call-3", None)
+        self.assertTrue(preview._display_text().endswith("🔧 Running tool…"))
+        preview.update_tool(None, None)
+        self.assertEqual(preview._display_text(), "a" * 4096)
+        await preview.close()
+
     async def test_draft_failure_is_nonfatal(self):
         bot = SimpleNamespace(send_message_draft=AsyncMock(side_effect=RuntimeError("unsupported")))
         working = SimpleNamespace(delete=AsyncMock())
@@ -92,13 +116,16 @@ class TelegramDraftRoutingTest(unittest.IsolatedAsyncioTestCase):
 
                 async def prompt(*_args, **kwargs):
                     if kwargs["on_text"]:
+                        kwargs["on_tool"]("call-1", "bash")
                         kwargs["on_text"]("preview")
+                        kwargs["on_tool"]("call-1", None)
                         await asyncio.sleep(0.01)
                     return PromptResult("final answer")
 
                 gateway.sessions = SimpleNamespace(prompt=AsyncMock(side_effect=prompt))
                 await gateway._send_to_pi(update, SimpleNamespace(id=1), "question")
                 self.assertEqual(gateway.sessions.prompt.call_args.kwargs["on_text"] is not None, chat_type == "private" and supports_drafts)
+                self.assertEqual(gateway.sessions.prompt.call_args.kwargs["on_tool"] is not None, chat_type == "private" and supports_drafts)
                 if chat_type == "private" and supports_drafts:
                     gateway.app.bot.send_message_draft.assert_awaited_once()
                 elif supports_drafts:

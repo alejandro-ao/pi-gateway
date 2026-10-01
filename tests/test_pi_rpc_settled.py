@@ -67,6 +67,27 @@ class PiRpcSettledTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "new answer")
         self.assertEqual(seen, ["", "", "old", "", "new", "new answer"])
 
+    async def test_tool_events_report_names_only_and_retry_resets_activity(self):
+        async def request(*_args, **_kwargs):
+            await self.send(
+                {"type": "agent_start"},
+                {"type": "tool_execution_start", "toolCallId": "first", "toolName": "bash", "args": {"command": "secret"}},
+                {"type": "tool_execution_update", "toolCallId": "first", "partialResult": "secret"},
+                {"type": "tool_execution_end", "toolCallId": "first", "result": "secret", "isError": True},
+                {"type": "tool_execution_start", "toolCallId": "second", "toolName": "read", "args": "secret"},
+                {"type": "agent_end", "willRetry": True},
+                {"type": "agent_start"},
+                {"type": "message_end", "message": {"role": "assistant", "content": "done"}},
+                {"type": "agent_settled"},
+            )
+            return {"success": True}
+
+        self.client.request.side_effect = request
+        seen = []
+        result = await self.client.prompt("hi", on_tool=lambda tool_id, name: seen.append((tool_id, name)))
+        self.assertEqual(result.text, "done")
+        self.assertEqual(seen, [(None, None), ("first", "bash"), ("first", None), ("second", "read"), (None, None)])
+
     async def test_preview_stops_at_telegram_limit_without_truncating_final_text(self):
         async def request(*_args, **_kwargs):
             await self.send(
