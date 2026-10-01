@@ -10,6 +10,7 @@ wheels/
 .venv
 
 # Runtime state
+.pi-gateway/
 *.sqlite3
 *.sqlite3-*
 *.log

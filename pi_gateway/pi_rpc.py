@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -130,6 +131,7 @@ class PiRpcClient:
         self.process = await asyncio.create_subprocess_exec(
             *args,
             cwd=self.config.cwd,
+            env={**os.environ, "PI_CODING_AGENT_DIR": self.config.agent_dir} if self.config.agent_dir else None,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

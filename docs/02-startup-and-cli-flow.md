@@ -16,7 +16,10 @@ pi-gateway stop                # stop background daemon
 pi-gateway status              # show background status
 pi-gateway logs [-f]           # read/follow log file
 pi-gateway configure telegram  # interactive config wizard
-pi-gateway config-path         # print default config path
+pi-gateway init                # create local instance and configure Telegram
+pi-gateway instances           # list initialized local instances
+pi-gateway -i <directory> status  # manage a bot from elsewhere
+pi-gateway config-path         # print selected config path
 ```
 
 ## Foreground Startup: `run`
@@ -59,9 +62,9 @@ Important behavior:
 
 It does not implement a full supervisor. It:
 
-1. Checks `~/.local/state/pi-gateway/pi-gateway.pid`.
+1. Selects the local `.pi-gateway/config.yaml` if present, otherwise the legacy global config (or explicit `-c`/`-i`). Checks the selected instance's PID file.
 2. If a live PID exists, it refuses to start another daemon.
-3. Opens `~/.local/state/pi-gateway/pi-gateway.log`.
+3. Opens the selected instance's log file.
 4. Spawns `pi-gateway run` with stdout/stderr redirected to the log.
 5. Writes the child PID to the PID file.
 
@@ -70,8 +73,9 @@ pi-gateway start
   ↓
 subprocess.Popen([sys.argv[0], "run", ...])
   ↓
-PID file: ~/.local/state/pi-gateway/pi-gateway.pid
-Log file: ~/.local/state/pi-gateway/pi-gateway.log
+PID file: .pi-gateway/pi-gateway.pid (legacy: ~/.local/state/pi-gateway/pi-gateway.pid)
+Log file: .pi-gateway/pi-gateway.log (legacy: ~/.local/state/pi-gateway/pi-gateway.log)
+Other -c configs: ~/.local/state/pi-gateway/instances/<stem>-<path-hash>/{pi-gateway.pid,pi-gateway.log}
 ```
 
 ## Stop Flow: `stop`
@@ -100,11 +104,7 @@ pi-gateway logs -n 200
 pi-gateway logs -f   # tail -f
 ```
 
-The log path is currently fixed:
-
-```text
-~/.local/state/pi-gateway/pi-gateway.log
-```
+Local instances use `.pi-gateway/pi-gateway.log`; legacy global configurations keep `~/.local/state/pi-gateway/pi-gateway.log`. Other explicit configs use per-config state directories keyed by canonical absolute path, so even two configs in one directory can run independently.
 
 ## Configure Flow
 
@@ -116,13 +116,7 @@ It asks for:
 2. Allowed Telegram user ID.
 3. Pi working directory, defaulting to the current directory.
 
-It writes YAML to:
-
-```text
-~/.config/pi-gateway/config.yaml
-```
-
-unless `-c/--config` is supplied.
+`init` refuses to overwrite an existing local config. `configure telegram` creates or updates `.pi-gateway/config.yaml` in the current directory unless `-c`/`-i` is supplied. Existing global configs remain the fallback for runtime commands when no local config exists. The registry at `~/.config/pi-gateway/instances.json` stores absolute local config paths for `instances`; missing configs are reported, not deleted.
 
 ## Important Code Locations
 
