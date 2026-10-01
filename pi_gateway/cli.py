@@ -19,7 +19,7 @@ from typing import Any
 import yaml
 
 from . import __version__
-from .config import load_config
+from .config import custom_state_dir, default_database_path, load_config
 from .db import GatewayDB
 from .session_manager import PiSessionManager
 from .telegram_bot import TelegramGateway
@@ -74,9 +74,14 @@ def resolve_config(args: argparse.Namespace, *, creating: bool = False) -> Path:
 
 
 def instance_state(config: Path) -> tuple[Path, Path]:
+    config = config.expanduser().resolve()
     if config == expand_path(DEFAULT_CONFIG_PATH):
         return pid_path(), log_path()
-    return config.parent / "pi-gateway.pid", config.parent / "pi-gateway.log"
+    if config.name == "config.yaml" and config.parent.name == ".pi-gateway":
+        state_dir = config.parent
+    else:
+        state_dir = custom_state_dir(config)
+    return state_dir / "pi-gateway.pid", state_dir / "pi-gateway.log"
 
 
 def register_instance(config: Path) -> None:
@@ -213,7 +218,7 @@ def configure_telegram(args: argparse.Namespace) -> None:
     default_db = (
         "~/.local/share/pi-gateway/pi-gateway.sqlite3"
         if path == expand_path(DEFAULT_CONFIG_PATH)
-        else str(path.parent / "pi-gateway.sqlite3")
+        else default_database_path(str(path))
     )
     data.setdefault("databasePath", default_db)
     data.setdefault("logLevel", "INFO")

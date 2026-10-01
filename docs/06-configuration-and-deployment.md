@@ -103,7 +103,7 @@ pi-gateway configure telegram --pi-cwd ~/pi-gateway-workspace
 
 ## Multiple Bots
 
-Initialize each bot in its own directory, with a unique Telegram bot token and a distinct allowed user ID configuration. Each local instance gets its own config, SQLite database, PID and log; multiple `start` processes can run simultaneously. Pi runs from the configured `pi.cwd` (defaults to the directory used at initialization). To isolate global Pi skills, settings, credentials, and sessions too, supply `--pi-agent-dir /absolute/path` to `init` or `configure telegram`; authenticate Pi for that agent directory. Without it, global Pi resources are shared by the OS user. Use one systemd service per directory in production.
+Initialize each bot in its own directory, with a unique Telegram bot token and a distinct allowed user ID configuration. Each local instance gets its own config, SQLite database, PID and log; multiple `start` processes can run simultaneously. Two bots can also share a Pi working directory using different `-c` config files: nonstandard config paths get distinct state directories and default SQLite databases based on the config's canonical absolute path. Moving such a config changes its derived paths; explicitly set `databasePath` to keep using an existing database. Explicit database paths must differ between bots. Pi runs from the configured `pi.cwd` (defaults to the directory used at initialization). To isolate global Pi skills, settings, credentials, and sessions too, supply `--pi-agent-dir /absolute/path` to `init` or `configure telegram`; authenticate Pi for that agent directory. Without it, global Pi resources are shared by the OS user. Use one systemd service per directory in production.
 
 ## Foreground Run
 
@@ -133,6 +133,7 @@ Files:
 Local PID: .pi-gateway/pi-gateway.pid
 Local log: .pi-gateway/pi-gateway.log
 Legacy PID/log: ~/.local/state/pi-gateway/pi-gateway.{pid,log}
+Other -c configs: ~/.local/state/pi-gateway/instances/<stem>-<path-hash>/ (PID, log, default DB)
 ```
 
 This is a convenience wrapper, not a full supervisor. If the process crashes, it will not automatically restart unless you use systemd or another supervisor.

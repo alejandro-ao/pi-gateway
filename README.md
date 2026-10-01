@@ -123,14 +123,19 @@ Repeat `init` and `start` in other directories to run multiple bots concurrently
 .pi-gateway/pi-gateway.log (local instances) or ~/.local/state/pi-gateway/pi-gateway.log (legacy config)
 ```
 
-With an explicit config:
+With an explicit config (including two bots sharing one Pi working directory):
 
 ```bash
+pi-gateway -c a.yaml start
+pi-gateway -c b.yaml start
+pi-gateway -c a.yaml stop
 pi-gateway -c config.yaml start
 pi-gateway -c config.yaml run
 # or
 pi-gateway run -c config.yaml
 ```
+
+Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history.
 
 Development checkout:
 

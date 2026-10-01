@@ -75,6 +75,7 @@ subprocess.Popen([sys.argv[0], "run", ...])
   ↓
 PID file: .pi-gateway/pi-gateway.pid (legacy: ~/.local/state/pi-gateway/pi-gateway.pid)
 Log file: .pi-gateway/pi-gateway.log (legacy: ~/.local/state/pi-gateway/pi-gateway.log)
+Other -c configs: ~/.local/state/pi-gateway/instances/<stem>-<path-hash>/{pi-gateway.pid,pi-gateway.log}
 ```
 
 ## Stop Flow: `stop`
@@ -103,7 +104,7 @@ pi-gateway logs -n 200
 pi-gateway logs -f   # tail -f
 ```
 
-Local instances use `.pi-gateway/pi-gateway.log`; legacy global configurations keep `~/.local/state/pi-gateway/pi-gateway.log`.
+Local instances use `.pi-gateway/pi-gateway.log`; legacy global configurations keep `~/.local/state/pi-gateway/pi-gateway.log`. Other explicit configs use per-config state directories keyed by canonical absolute path, so even two configs in one directory can run independently.
 
 ## Configure Flow
 

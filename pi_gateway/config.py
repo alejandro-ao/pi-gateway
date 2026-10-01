@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,22 @@ def _env_or_value(value: Any) -> Any:
 
 def _expand_path(path: str) -> str:
     return str(Path(os.path.expandvars(os.path.expanduser(path))).resolve())
+
+
+def default_database_path(config_path: str) -> str:
+    """Keep standard instance paths stable; isolate arbitrary config files."""
+    config = Path(os.path.expandvars(os.path.expanduser(config_path))).resolve()
+    if config == Path("~/.config/pi-gateway/config.yaml").expanduser().resolve():
+        return "./pi-gateway.sqlite3"  # Existing legacy loader default.
+    if config.name == "config.yaml" and config.parent.name == ".pi-gateway":
+        return str(config.parent / "pi-gateway.sqlite3")
+    return str(custom_state_dir(config) / "pi-gateway.sqlite3")
+
+
+def custom_state_dir(config: Path) -> Path:
+    config = Path(os.path.expandvars(os.path.expanduser(str(config)))).resolve()
+    digest = hashlib.sha256(str(config).encode("utf-8")).hexdigest()[:16]
+    return Path("~/.local/state/pi-gateway/instances").expanduser() / f"{config.stem}-{digest}"
 
 
 def _positive_int(value: Any, name: str) -> int:
@@ -96,7 +113,9 @@ def load_config(path: str | None) -> GatewayConfig:
         ),
     )
 
-    db = raw.get("databasePath") or raw.get("database_path") or os.environ.get("PI_GATEWAY_DB", "./pi-gateway.sqlite3")
+    db = raw.get("databasePath") or raw.get("database_path") or os.environ.get("PI_GATEWAY_DB")
+    if not db:
+        db = default_database_path(path) if path else "./pi-gateway.sqlite3"
     return GatewayConfig(
         database_path=_expand_path(str(db)),
         log_level=str(raw.get("logLevel", raw.get("log_level", os.environ.get("PI_GATEWAY_LOG_LEVEL", "INFO")))).upper(),

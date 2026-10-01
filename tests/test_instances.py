@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import signal
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +77,44 @@ class LocalInstancesTest(unittest.TestCase):
             self.assertEqual(popen.call_args.args[0], ["pi-gateway", "run", "--config", str(config)])
         self.assertEqual(cli.instance_state(config)[0].read_text(), "42")
         self.assertTrue(cli.instance_state(config)[1].is_file())
+
+    def test_explicit_configs_in_same_directory_have_separate_state(self):
+        os.chdir(self.root)
+        configs = [self.root / "a.yaml", self.root / "b.yaml"]
+        states = []
+        for index, config in enumerate(configs):
+            args = self.args(config=str(config), bot_token=f"token-{index}")
+            cli.configure_telegram(args)
+            states.append(cli.instance_state(config))
+            self.assertEqual(load_config(str(config)).database_path, str(states[-1][0].parent / "pi-gateway.sqlite3"))
+        self.assertNotEqual(states[0], states[1])
+        self.assertNotEqual(load_config(str(configs[0])).database_path, load_config(str(configs[1])).database_path)
+        with patch.object(cli.subprocess, "Popen") as popen, patch.object(cli.sys, "argv", ["pi-gateway"]):
+            for index, config in enumerate(configs):
+                popen.return_value.pid = 100 + index
+                cli.start_background(self.args(config=str(config)))
+        self.assertEqual(states[0][0].read_text(), "100")
+        self.assertEqual(states[1][0].read_text(), "101")
+        with patch.object(cli.os, "kill") as kill:
+            # A zero timeout avoids waiting for fake processes.
+            cli.stop_background(argparse.Namespace(config=str(configs[1]), instance=None, timeout=0))
+            kill.assert_any_call(101, signal.SIGTERM)
+            self.assertNotIn(100, [call.args[0] for call in kill.call_args_list])
+
+    def test_legacy_and_local_state_paths_remain_unchanged(self):
+        legacy = cli.expand_path(cli.DEFAULT_CONFIG_PATH)
+        self.assertEqual(cli.instance_state(legacy), (cli.pid_path(), cli.log_path()))
+        local = cli.local_config(self.root)
+        self.assertEqual(cli.instance_state(local), (local.parent / "pi-gateway.pid", local.parent / "pi-gateway.log"))
+        self.assertEqual(cli.default_database_path(str(local)), str(local.parent / "pi-gateway.sqlite3"))
+
+    def test_manual_explicit_config_without_database_path_is_isolated(self):
+        configs = [self.root / "a.yaml", self.root / "b.yaml"]
+        for config in configs:
+            config.write_text("logLevel: INFO\n")
+        self.assertNotEqual(load_config(str(configs[0])).database_path, load_config(str(configs[1])).database_path)
+        configs[0].write_text("databasePath: ./chosen.sqlite3\n")
+        self.assertEqual(load_config(str(configs[0])).database_path, str(self.old_cwd / "chosen.sqlite3"))
 
     def test_cli_config_precedence(self):
         parser = cli.build_parser()
