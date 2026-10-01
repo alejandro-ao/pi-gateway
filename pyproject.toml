@@ -1,6 +1,6 @@
 [project]
 name = "pi-gateway"
-version = "0.1.1"
+version = "0.2.0"
 description = "Telegram gateway for controlling persistent Pi coding-agent sessions over RPC"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -8,6 +8,17 @@ dependencies = [
   "python-telegram-bot>=21.0,<23.0",
   "PyYAML>=6.0.1,<7.0",
 ]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.15,<2",
+  "pytest>=8,<10",
+  "ruff>=0.12,<1",
+  "types-PyYAML>=6.0.12",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [project.scripts]
 pi-gateway = "pi_gateway.cli:main"

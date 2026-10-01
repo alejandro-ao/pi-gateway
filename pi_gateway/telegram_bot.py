@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .config import GatewayConfig, TelegramConfig
 
@@ -99,6 +97,8 @@ class TelegramGateway:
             BotCommand("thinking", "Set thinking level"),
         ])
         await self.app.start()
+        if self.app.updater is None:
+            raise RuntimeError("Telegram polling updater is unavailable")
         await self.app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         log.info("telegram gateway started")
 
@@ -112,7 +112,7 @@ class TelegramGateway:
                 log.exception("failed to send lifecycle notification to telegram user %s", user_id)
 
     async def stop(self) -> None:
-        if self.app.updater.running:
+        if self.app.updater and self.app.updater.running:
             await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()
@@ -261,7 +261,10 @@ class TelegramGateway:
 
     async def _send_to_pi(self, update: Update, conv: Conversation, text: str, *, streaming_behavior: str | None = None) -> None:
         await self._typing(update)
-        working = await update.effective_message.reply_text("⏳ Pi is working...")
+        message = update.effective_message
+        if message is None:
+            return
+        working = await message.reply_text("⏳ Pi is working...")
         try:
             result = await self.sessions.prompt(conv, text, streaming_behavior=streaming_behavior)
         finally:
