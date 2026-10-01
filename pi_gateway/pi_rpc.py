@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any
@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 # the reader task. PiConfig.rpc_stream_limit uses a larger default and can be
 # raised for deployments that expect unusually large RPC frames.
 RPC_ERROR_EVENT = "_pi_rpc_error"
+PREVIEW_TEXT_LIMIT = 4096  # Telegram drafts cannot show more than this.
 
 
 class PiRpcError(RuntimeError):
@@ -223,7 +224,10 @@ class PiRpcClient:
             if event.get("type") == "agent_settled":
                 return
 
-    async def prompt(self, message: str, *, streaming_behavior: str | None = None) -> PromptResult:
+    async def prompt(
+        self, message: str, *, streaming_behavior: str | None = None, on_text: Callable[[str], None] | None = None,
+        on_tool: Callable[[str | None, str | None], None] | None = None,
+    ) -> PromptResult:
         payload: dict[str, Any] = {"type": "prompt", "message": message}
         if streaming_behavior:
             payload["streamingBehavior"] = streaming_behavior
@@ -235,12 +239,39 @@ class PiRpcClient:
         await self.request(payload, timeout=60)
         events: list[dict[str, Any]] = []
         final_text = ""
+        preview_text = ""
         async for event in self.events_until_agent_settled(timeout=None):
             events.append(event_without_message_history(event))
             if event.get("type") == "agent_start":
                 # Retries after an overflow begin another run. Do not send a
                 # partial answer from the earlier attempt to Telegram.
                 final_text = ""
+                preview_text = ""
+                if on_text:
+                    on_text("")
+                if on_tool:
+                    on_tool(None, None)  # Discard any tools from a failed attempt.
+            elif event.get("type") == "message_start":
+                msg = event.get("message")
+                if isinstance(msg, dict) and msg.get("role") == "assistant":
+                    preview_text = ""
+                    if on_text:
+                        on_text("")
+            elif event.get("type") == "message_update":
+                update = event.get("assistantMessageEvent") or {}
+                if on_text and isinstance(update, dict) and update.get("type") == "text_delta" and isinstance(update.get("delta"), str):
+                    new_text = (preview_text + update["delta"])[:PREVIEW_TEXT_LIMIT]
+                    if new_text != preview_text:
+                        preview_text = new_text
+                        on_text(preview_text)
+            elif event.get("type") == "tool_execution_start":
+                tool_id, tool_name = event.get("toolCallId"), event.get("toolName")
+                if on_tool and isinstance(tool_id, str) and isinstance(tool_name, str):
+                    on_tool(tool_id, tool_name)  # Never expose args or results.
+            elif event.get("type") == "tool_execution_end":
+                tool_id = event.get("toolCallId")
+                if on_tool and isinstance(tool_id, str):
+                    on_tool(tool_id, None)
             elif event.get("type") == "message_end":
                 msg = event.get("message") or {}
                 if isinstance(msg, dict) and msg.get("role") == "assistant":

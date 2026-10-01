@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
+import secrets
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from .config import GatewayConfig, TelegramConfig
 
 if TYPE_CHECKING:
-    from telegram import Update
+    from telegram import Bot, Message, Update
     from telegram.ext import ContextTypes
 from .db import Conversation, GatewayDB
 from .session_manager import PiSessionManager
@@ -55,6 +59,88 @@ def chunks(text: str, limit: int = 3900) -> list[str]:
         out.append(text[:split])
         text = text[split:].lstrip("\n")
     return out
+
+
+class DraftPreview:
+    """Coalesce Pi text updates into rate-limited, ephemeral Telegram drafts."""
+
+    def __init__(self, bot: Bot, chat_id: int, working: Message, thread_id: int | None = None):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.working: Message | None = working
+        self.thread_id = thread_id
+        self.draft_id = secrets.randbelow(2**31 - 1) + 1
+        self.text = ""
+        self.tools: dict[str, str] = {}
+        self.changed = asyncio.Event()
+        self.task: asyncio.Task[None] | None = None
+        self.closed = False
+
+    def update(self, text: str) -> None:
+        if self.closed:
+            return
+        self.text = text[:TELEGRAM_LIMIT]
+        self.changed.set()
+        if self.task is None:
+            self.task = asyncio.create_task(self._send(), name="telegram-draft-preview")
+
+    def update_tool(self, tool_id: str | None, tool_name: str | None) -> None:
+        if self.closed:
+            return
+        if tool_id is None:
+            self.tools.clear()  # A new agent attempt must not retain old tool activity.
+        elif tool_name is None:
+            self.tools.pop(tool_id, None)
+        else:
+            # Extension-defined names are untrusted: never show args/results or control characters.
+            self.tools[tool_id] = tool_name if re.fullmatch(r"[A-Za-z0-9_-]{1,48}", tool_name) else "tool"
+        self.changed.set()
+        if self.task is None:
+            self.task = asyncio.create_task(self._send(), name="telegram-draft-preview")
+
+    def _display_text(self) -> str:
+        if not self.tools:
+            return self.text
+        activity = f"🔧 Running {next(reversed(self.tools.values()))}…"
+        separator = "\n\n" if self.text else ""
+        return self.text[:TELEGRAM_LIMIT - len(separator) - len(activity)] + separator + activity
+
+    async def _send(self) -> None:
+        last_text: str | None = None
+        last_time = 0.0
+        try:
+            while True:
+                await self.changed.wait()
+                self.changed.clear()
+                if not self.text and not self.tools and last_text is None:
+                    continue  # Keep the working message until there is text or tool activity.
+                if last_time:
+                    await asyncio.sleep(max(0, 0.8 - (monotonic() - last_time)))
+                text = self._display_text()
+                if text == last_text:
+                    continue
+                await self.bot.send_message_draft(
+                    chat_id=self.chat_id, draft_id=self.draft_id, text=text, message_thread_id=self.thread_id,
+                )
+                last_text = text
+                last_time = monotonic()
+                if self.working:
+                    try:
+                        await self.working.delete()
+                    except Exception:
+                        pass
+                    self.working = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("Telegram draft streaming failed; final reply will still be sent", exc_info=True)
+            self.closed = True
+
+    async def close(self) -> None:
+        self.closed = True
+        if self.task:
+            self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
 
 
 class TelegramGateway:
@@ -259,15 +345,29 @@ class TelegramGateway:
             log.exception("message failed")
             await self._reply(update, f"Error: {e}")
 
+    def _drafts_available(self, update: Update) -> bool:
+        chat = update.effective_chat
+        return bool(chat and chat.type == "private" and hasattr(self.app.bot, "send_message_draft"))
+
     async def _send_to_pi(self, update: Update, conv: Conversation, text: str, *, streaming_behavior: str | None = None) -> None:
         await self._typing(update)
         message = update.effective_message
         if message is None:
             return
         working = await message.reply_text("⏳ Pi is working...")
+        chat = update.effective_chat
+        preview = (
+            DraftPreview(self.app.bot, chat.id, working, message.message_thread_id)
+            if chat and self._drafts_available(update) else None
+        )
         try:
-            result = await self.sessions.prompt(conv, text, streaming_behavior=streaming_behavior)
+            result = await self.sessions.prompt(
+                conv, text, streaming_behavior=streaming_behavior,
+                on_text=preview.update if preview else None, on_tool=preview.update_tool if preview else None,
+            )
         finally:
+            if preview:
+                await preview.close()
             try:
                 await working.delete()
             except Exception:
@@ -286,12 +386,15 @@ class TelegramGateway:
             f"File: {state.get('sessionFile')}\n"
             f"Model: {provider}/{model_id}\n"
             f"Thinking: {state.get('thinkingLevel')}\n"
-            f"Streaming: {state.get('isStreaming')}"
+            f"Pi generating now: {state.get('isStreaming')}"
         )
 
     async def _status(self, update: Update, conv: Conversation) -> None:
         state = await self.sessions.state(conv)
         text = self._state_summary(state)
+        text += "\nTelegram draft preview: " + (
+            "available (private chat)" if self._drafts_available(update) else "unavailable (private chat / newer SDK required)"
+        )
         version_status = await check_version()
         text += f"\n{format_status_line(version_status)}"
         try:

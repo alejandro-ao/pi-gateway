@@ -146,8 +146,9 @@ Telegram has message length limits. `chunks()` splits long messages before sendi
 Current behavior:
 
 - The gateway sends a temporary `⏳ Pi is working...` message.
-- Once Pi returns, it deletes the temporary message if possible.
-- It sends the final assistant text split into chunks.
+- In private chats with `sendMessageDraft` support (python-telegram-bot 22.7+), it coalesces Pi text deltas into drafts at most every 0.8 seconds, using a nonzero per-reply draft ID. The first successful draft removes the working message. The preview shows sanitized tool names during `tool_execution_start`/`tool_execution_end` (no arguments, output, or thinking text); concurrent tools show the most recently started active tool. The tool indicator disappears on completion, and retries clear it. Only the first 4,096 characters are previewed, with space reserved for the tool indicator; the preview is ephemeral (about 30 seconds) and may be replaced by retries. Errors disable drafts for that reply without interrupting Pi.
+- Group chats, older SDKs, and replies without text deltas use the original working message. When Pi settles (or fails), the working message is removed if still present.
+- After `agent_settled`, the complete, authoritative answer is sent in persistent chunks. Drafts are never treated as final, and thinking deltas are never forwarded. `/status` reports `Pi generating now` separately from `Telegram draft preview` availability. Availability means the chat is private and the SDK implements the draft method; Telegram can still reject an individual draft, in which case the normal final reply is sent.
 
 ## Important Code Locations
 

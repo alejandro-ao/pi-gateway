@@ -131,7 +131,7 @@ Important Pi RPC assumptions:
 - Start command is `pi --mode rpc`.
 - Existing sessions can resume with `--session <session-file>`.
 - JSONL records are newline-delimited.
-- Prompt completion requires `agent_settled`; `agent_end` only ends one low-level run and Pi may still compact/retry.
+- Prompt completion requires `agent_settled`; `agent_end` only ends one low-level run and Pi may still compact/retry. Private-chat Telegram previews may stream `message_update.assistantMessageEvent.text_delta` and temporary sanitized tool names from `tool_execution_start`/`tool_execution_end` through rate-limited ephemeral drafts; never expose tool args/results, thinking content, or treat drafts as the final reply. Keep the group/unsupported-API working-message fallback. `/status` must distinguish Pi's instantaneous generating flag from Telegram draft availability.
 
 If Pi RPC protocol changes, update:
 
