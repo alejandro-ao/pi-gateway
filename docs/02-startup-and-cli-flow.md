@@ -21,6 +21,7 @@ pi-gateway instances           # list registered instances (including custom -c 
 pi-gateway instances forget <name>  # unregister stopped bot without deleting files
 pi-gateway remove <name> [--dry-run|--stop|--yes]  # delete only its config
 pi-gateway status -i <name|directory>  # manage a bot from elsewhere
+pi-gateway migrate-db [--dry-run] [-c <config>|-i <instance>] [--database <destination>]
 pi-gateway config-path         # print selected config path
 ```
 
@@ -57,6 +58,8 @@ Important behavior:
 - `run` is blocking and logs to the current terminal.
 - This is the right mode for debugging and for systemd.
 - SIGINT/SIGTERM triggers graceful shutdown.
+- A config-specific runtime file lock remains held through foreground/systemd execution. Migration, removal and forgetting refuse live holders, not just background PIDs.
+- Identified instances open a scoped shared database; legacy configs retain their unscoped databases until explicit migration.
 
 ## Background Startup: `start`
 
@@ -128,7 +131,7 @@ It asks for:
 
 Both `init` and `configure telegram` accept `--model` and `--thinking` for non-interactive setup. The model is split at the first `/` into `pi.defaultProvider` and `pi.defaultModel`; `pi.defaultThinking` holds the selected reasoning level. Invalid values are rejected before the config is written.
 
-`init` refuses to overwrite an existing local config. `configure telegram` creates or updates `.pi-gateway/config.yaml` in the current directory unless `-c`/`-i` is supplied. Both accept `--name` to set or rename `instanceName` in that YAML file. Existing global configs remain the fallback for runtime commands when no local config exists. The registry at `~/.config/pi-gateway/instances.json` indexes *all* configured gateway files by name/path; old path-only registries are migrated on read. Registration and uniqueness checks use a file lock so a duplicate name cannot overwrite an existing entry. Missing configs are shown as missing, not silently removed; `instances forget <name>` unregisters a stopped gateway without deleting its files.
+`init` refuses to overwrite an existing local config. `configure telegram` creates or updates `.pi-gateway/config.yaml` in the current directory unless `-c`/`-i` is supplied. Both accept `--name` to set or rename `instanceName` in that YAML file. New configs get a generated `instanceId` and share `~/.local/state/pi-gateway/gateway.sqlite3`; existing unidentified configs keep their database path and require `migrate-db` to consolidate. Config writes use private temporary files and atomic replacement. Existing global configs remain the fallback for runtime commands when no local config exists. The registry at `~/.config/pi-gateway/instances.json` indexes *all* configured gateway files by name/path; old path-only registries are migrated on read. Registration and uniqueness checks use a file lock so a duplicate name cannot overwrite an existing entry. The registry remains a discovery index alongside SQLite ownership metadata; removal/forget archive the database instance row while preserving history. Missing configs are shown as missing, not silently removed; `instances forget <name>` unregisters a stopped gateway without deleting its files.
 
 ## Important Code Locations
 

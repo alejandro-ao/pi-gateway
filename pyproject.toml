@@ -21,6 +21,9 @@ dev = [
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
 
+[tool.mypy]
+files = ["pi_gateway", "tests"]
+
 [project.scripts]
 pi-gateway = "pi_gateway.cli:main"
 

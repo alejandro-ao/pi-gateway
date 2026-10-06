@@ -1,6 +1,10 @@
 # Optional gateway identifier (unique per user, not a Pi session name):
 instanceName: research
-databasePath: ~/.local/share/pi-gateway/pi-gateway.sqlite3
+# Prefer `pi-gateway init` to generate a unique instanceId automatically.
+# If starting from this manual example, run `pi-gateway migrate-db -c <file>`
+# before starting to assign an ID and select the shared database.
+# Never copy an instanceId from another bot's config.
+# databasePath: ~/.local/state/pi-gateway/gateway.sqlite3  # Optional override after migration
 logLevel: INFO
 
 telegram:

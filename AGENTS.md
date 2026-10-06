@@ -85,7 +85,7 @@ pi-gateway status -i research
 pi-gateway remove research --dry-run  # preview config-only deletion
 ```
 
-`configure telegram` also creates/updates a local config by default. `init` and `configure telegram` accept optional `--name` for a unique gateway identifier; the registry indexes all configured bots (including custom `-c` files), and `-i` accepts names or bot directories. Both commands also accept optional `--model provider/model-id` and `--thinking <level>` for Pi startup defaults. Interactive setup uses `pi --list-models` with the configured Pi executable/agent directory for a fuzzy-searchable model picker; on listing failure it falls back to manual entry. Empty keeps the current model, `default` clears it; noninteractive flags skip catalog lookup. Existing values are retained when flags are omitted. `-c` and `-i` work before or after runtime subcommands; `start` must print bot-specific stop/log commands using the resolved absolute config path. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local state (config, DB, PID, log) belongs in `.pi-gateway/`; add that directory to bot projects' `.gitignore`.
+`configure telegram` also creates/updates a local config by default. `init` and `configure telegram` accept optional `--name` for a unique gateway identifier; the registry indexes all configured bots (including custom `-c` files), and `-i` accepts names or bot directories. Both commands also accept optional `--model provider/model-id` and `--thinking <level>` for Pi startup defaults. Interactive setup uses `pi --list-models` with the configured Pi executable/agent directory for a fuzzy-searchable model picker; on listing failure it falls back to manual entry. Empty keeps the current model, `default` clears it; noninteractive flags skip catalog lookup. Existing values are retained when flags are omitted. `-c` and `-i` work before or after runtime subcommands; `start` must print bot-specific stop/log commands using the resolved absolute config path. Explicit `-c` overrides local discovery; legacy global config is the runtime fallback. Local config/PID/log belong in `.pi-gateway/`; new instances use `~/.local/state/pi-gateway/gateway.sqlite3` with config-persisted `instanceId` UUIDs. Legacy configs retain old DBs until explicit `migrate-db` (preview with `--dry-run`, stop all affected processes first). Imports back up sources, remap IDs, and commit markers transactionally; rerun interrupted migration before restarting bots. The JSON registry stays the discovery index, while SQLite stores ownership metadata. Every shared DB query/write must enforce instance isolation. Removal/forget archive instance records and never delete conversation history; add that directory to bot projects' `.gitignore`.
 
 ## Repository Structure
 
@@ -93,7 +93,9 @@ pi-gateway remove research --dry-run  # preview config-only deletion
 pi_gateway/
 ├── cli.py              # CLI, config wizard, foreground/background process commands
 ├── config.py           # YAML/env config loader and dataclasses
-├── db.py               # SQLite schema and gateway persistence
+├── db.py               # Scoped gateway persistence + legacy compatibility
+├── storage.py          # Versioned shared schema, connection and ownership helpers
+├── migration.py        # Explicit idempotent imports from legacy/scoped databases
 ├── instance_registry.py # names to config paths; upgrades legacy path-only index
 ├── pi_rpc.py           # JSONL RPC subprocess client for `pi --mode rpc`
 ├── session_manager.py  # per-conversation Pi client cache/locks

@@ -22,7 +22,9 @@ _NAME_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\Z")
 def normalize_name(value: str) -> str:
     name = value.strip().lower()
     if not _NAME_PATTERN.fullmatch(name):
-        raise ValueError("Instance name must be 1-64 letters, digits, or hyphens; no leading/trailing hyphen.")
+        raise ValueError(
+            "Instance name must be 1-64 letters, digits, or hyphens; no leading/trailing hyphen."
+        )
     return name
 
 
@@ -37,7 +39,7 @@ class InstanceRegistry:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             yield
 
-    def load(self) -> list[RegisteredInstance]:
+    def load(self, *, persist_upgrade: bool = True) -> list[RegisteredInstance]:
         """Call with locked(). Upgrade the original list-of-paths registry in place."""
         if not self.path.exists():
             return []
@@ -57,17 +59,30 @@ class InstanceRegistry:
                 raise ValueError(f"Invalid instance registry: {self.path}")
             name = row.get("name")
             if name is not None:
-                if not isinstance(name, str) or normalize_name(name) != name or name in names:
-                    raise ValueError(f"Invalid or duplicate instance name in registry: {self.path}")
+                if (
+                    not isinstance(name, str)
+                    or normalize_name(name) != name
+                    or name in names
+                ):
+                    raise ValueError(
+                        f"Invalid or duplicate instance name in registry: {self.path}"
+                    )
                 names.add(name)
-            entries.append({"name": name, "config": str(Path(row["config"]).expanduser().resolve())})
-        if legacy:
+            entries.append(
+                {
+                    "name": name,
+                    "config": str(Path(row["config"]).expanduser().resolve()),
+                }
+            )
+        if legacy and persist_upgrade:
             self.save(entries)
         return entries
 
     def save(self, entries: list[RegisteredInstance]) -> None:
         """Call with locked(). Replace the index atomically (never store bot tokens)."""
-        with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, delete=False, encoding="utf-8") as tmp:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=self.path.parent, delete=False, encoding="utf-8"
+        ) as tmp:
             json.dump({"version": 2, "instances": entries}, tmp, indent=2)
             tmp.write("\n")
             tmp_path = Path(tmp.name)
@@ -77,10 +92,16 @@ class InstanceRegistry:
             tmp_path.unlink(missing_ok=True)
 
     @staticmethod
-    def upsert(entries: list[RegisteredInstance], config: Path, name: str | None) -> list[RegisteredInstance]:
+    def upsert(
+        entries: list[RegisteredInstance], config: Path, name: str | None
+    ) -> list[RegisteredInstance]:
         path = str(config.resolve())
-        if name and any(entry["name"] == name and entry["config"] != path for entry in entries):
-            raise ValueError(f"Instance name {name!r} is already assigned to another config.")
+        if name and any(
+            entry["name"] == name and entry["config"] != path for entry in entries
+        ):
+            raise ValueError(
+                f"Instance name {name!r} is already assigned to another config."
+            )
         updated = [entry for entry in entries if entry["config"] != path]
         updated.append({"name": name, "config": path})
         return updated

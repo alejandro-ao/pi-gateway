@@ -85,14 +85,15 @@ The tradeoff is that we must manage subprocesses, JSONL framing, and stdout/stde
 |-------|-------|---------|
 | Pi conversation history | Pi | JSONL session files |
 | Active branch/session tree | Pi | JSONL session files |
-| Telegram to Pi mapping | Gateway | SQLite |
-| Gateway instance name and config path | Gateway | YAML config + per-user registry |
+| Telegram to Pi mapping | Gateway | Per-user shared SQLite, scoped by instance UUID (legacy DBs until migration) |
+| Gateway instance identity/name/config path | Gateway | YAML UUID + JSON discovery index + SQLite ownership metadata |
 | Inbound/outbound audit log | Gateway | SQLite |
 | Running child processes | Gateway | In memory + PID file for background daemon |
 
 ## Design Constraints
 
-- One Telegram conversation should map to one Pi session file.
+- One Telegram conversation per gateway instance should map to one Pi session file. All shared database operations enforce instance ownership.
+- New instances share `~/.local/state/pi-gateway/gateway.sqlite3`; populated legacy databases migrate only via `migrate-db`. Pi JSONL files remain independent.
 - Normal text goes to Pi as a prompt.
 - Gateway slash commands are handled before Pi sees the message.
 - Pi slash commands can still be sent with `/pi <text>`.

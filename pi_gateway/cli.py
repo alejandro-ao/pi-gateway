@@ -13,16 +13,20 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
 from . import __version__
-from .config import custom_state_dir, default_database_path, load_config
-from .db import GatewayDB
-from .instance_registry import InstanceRegistry, normalize_name
+from .config import GatewayConfig, custom_state_dir, load_config
+from .db import GatewayDB, utc_now
+from .instance_registry import InstanceRegistry, RegisteredInstance, normalize_name
+from .migration import import_instance, inspect_source, open_source
 from .session_manager import PiSessionManager
+from .storage import connect, init_shared, register_instance, shared_database_path
 from .telegram_bot import TelegramGateway
 from .version_check import check_version, format_update_notice
 
@@ -36,9 +40,30 @@ _HELD_LOCK_FILES: list[Any] = []
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
-def acquire_bot_token_lock(bot_token: str) -> None:
+def bot_token_lock_path(bot_token: str) -> Path:
     token_hash = hashlib.sha256(bot_token.encode("utf-8")).hexdigest()[:16]
-    path = Path(tempfile.gettempdir()) / f"pi-gateway-telegram-{token_hash}.lock"
+    return Path(tempfile.gettempdir()) / f"pi-gateway-telegram-{token_hash}.lock"
+
+
+@contextmanager
+def migration_token_lock(bot_token: str) -> Iterator[None]:
+    # Older gateways lack runtime locks but already hold this token lock.
+    path = bot_token_lock_path(bot_token)
+    if not path.exists():
+        yield
+        return
+    with path.open("r") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SystemExit(
+                "A gateway using this bot token is running; stop it before migration."
+            ) from exc
+        yield
+
+
+def acquire_bot_token_lock(bot_token: str) -> None:
+    path = bot_token_lock_path(bot_token)
     lock_file = path.open("a+", encoding="utf-8")
     try:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -68,13 +93,24 @@ def resolve_config(args: argparse.Namespace, *, creating: bool = False) -> Path:
         instance = args.instance
         registry = InstanceRegistry(expand_path(REGISTRY_PATH))
         with registry.locked():
-            match = next((entry for entry in registry.load() if entry["name"] == instance.lower()), None)
+            match = next(
+                (
+                    entry
+                    for entry in registry.load(
+                        persist_upgrade=not getattr(args, "dry_run", False)
+                    )
+                    if entry["name"] == instance.lower()
+                ),
+                None,
+            )
         if match:
             path = Path(match["config"])
         elif "/" in instance or instance.startswith("~") or Path(instance).is_dir():
             path = local_config(expand_path(instance))
         else:
-            raise SystemExit(f"Unknown instance {instance!r}. See `pi-gateway instances`.")
+            raise SystemExit(
+                f"Unknown instance {instance!r}. See `pi-gateway instances`."
+            )
         if not path.is_file():
             raise SystemExit(f"No initialized instance at {path}")
         return path
@@ -109,7 +145,11 @@ def list_instances(args: argparse.Namespace) -> None:
         else:
             pid, _ = instance_state(config)
             running = read_pid(pid)
-            state = f"running (PID {running})" if running and is_process_running(running) else "stopped"
+            state = (
+                f"running (PID {running})"
+                if running and is_process_running(running)
+                else "stopped"
+            )
         print(f"{entry['name'] or '(unnamed)'}: {state}  (config: {config})")
 
 
@@ -117,14 +157,18 @@ def forget_instance(args: argparse.Namespace) -> None:
     registry = InstanceRegistry(expand_path(REGISTRY_PATH))
     with registry.locked():
         entries = registry.load()
-        match = next((entry for entry in entries if entry["name"] == args.name.lower()), None)
+        match = next(
+            (entry for entry in entries if entry["name"] == args.name.lower()), None
+        )
         if match is None:
             raise SystemExit(f"Unknown instance {args.name!r}.")
         pid, _ = instance_state(Path(match["config"]))
         running = read_pid(pid)
         if running and is_process_running(running):
             raise SystemExit(f"Stop instance {args.name!r} before forgetting it.")
-        registry.save([entry for entry in entries if entry is not match])
+        with instance_runtime_lock(Path(match["config"])):
+            archive_instance(Path(match["config"]))
+            registry.save([entry for entry in entries if entry is not match])
     print(f"Forgot {args.name!r} (config and database were not deleted).")
 
 
@@ -139,8 +183,13 @@ def remove_gateway(args: argparse.Namespace) -> None:
         entries = registry.load()
         match = next(
             (
-                entry for entry in entries
-                if (entry["name"] == args.target.lower() if args.target else entry["config"] == str(config))
+                entry
+                for entry in entries
+                if (
+                    entry["name"] == args.target.lower()
+                    if args.target
+                    else entry["config"] == str(config)
+                )
             ),
             None,
         )
@@ -151,9 +200,13 @@ def remove_gateway(args: argparse.Namespace) -> None:
         pid_file, _ = instance_state(path)
         pid = read_pid(pid_file)
         running = bool(pid and is_process_running(pid))
-        print(f"Gateway: {label}\nConfig: {path}\nStatus: {'running' if running else 'stopped'}")
+        print(
+            f"Gateway: {label}\nConfig: {path}\nStatus: {'running' if running else 'stopped'}"
+        )
         if args.dry_run:
-            print("Dry run: nothing changed. Database, logs, and Pi sessions are never removed.")
+            print(
+                "Dry run: nothing changed. Database, logs, and Pi sessions are never removed."
+            )
             return
         if running and not args.stop:
             raise SystemExit("Gateway is running. Stop it first or pass --stop.")
@@ -161,18 +214,124 @@ def remove_gateway(args: argparse.Namespace) -> None:
             try:
                 answer = input("Delete this config and unregister the gateway? [y/N]: ")
             except EOFError as exc:
-                raise SystemExit("Confirmation required; pass --yes for automation.") from exc
+                raise SystemExit(
+                    "Confirmation required; pass --yes for automation."
+                ) from exc
             if answer.strip().lower() not in {"y", "yes"}:
                 print("Cancelled; nothing changed.")
                 return
         if running:
-            stop_background(argparse.Namespace(config=str(path), instance=None, timeout=args.timeout))
+            stop_background(
+                argparse.Namespace(
+                    config=str(path), instance=None, timeout=args.timeout
+                )
+            )
             pid = read_pid(pid_file)
             if pid and is_process_running(pid):
                 raise SystemExit("Gateway is still running; config was not removed.")
-        path.unlink(missing_ok=True)
-        registry.save([entry for entry in entries if entry is not match])
-    print("Removed config and registry entry. Database, logs, and Pi sessions were preserved.")
+        with instance_runtime_lock(path):
+            archive_instance(path)
+            path.unlink(missing_ok=True)
+            registry.save([entry for entry in entries if entry is not match])
+    print(
+        "Removed config and registry entry. Database, logs, and Pi sessions were preserved."
+    )
+
+
+def archive_instance(path: Path) -> None:
+    database = (
+        load_config(str(path)).database_path
+        if path.exists()
+        else shared_database_path()
+    )
+    if not Path(database).exists():
+        return
+    conn = connect(database)
+    try:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='instances'"
+        ).fetchone():
+            return
+        with conn:
+            conn.execute(
+                "UPDATE instances SET archived_at=?, updated_at=? WHERE config_path=? AND archived_at IS NULL",
+                (utc_now(), utc_now(), str(path)),
+            )
+    finally:
+        conn.close()
+
+
+def migrate_databases(args: argparse.Namespace) -> None:
+    target = expand_path(args.database or shared_database_path())
+    registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+    selected = resolve_config(args) if args.config or args.instance else None
+    # Serialize with configure/start/remove. Runtime locks also cover foreground/systemd.
+    with registry.locked(), ExitStack() as stack:
+        entries = registry.load(persist_upgrade=not args.dry_run)
+        paths = [selected] if selected else [Path(entry["config"]) for entry in entries]
+        if not paths:
+            raise SystemExit("No registered instances. Select a config with -c.")
+        plans = []
+        sources: set[str] = set()
+        token_locks: set[Path] = set()
+        for path in paths:
+            if not path.is_file():
+                raise SystemExit(
+                    f"Missing config: {path}; unregister it or migrate selected configs with -c."
+                )
+            pid = read_pid(instance_state(path)[0])
+            if pid and is_process_running(pid):
+                raise SystemExit(f"Stop gateway before migration: {path}")
+            stack.enter_context(instance_runtime_lock(path, dry_run=args.dry_run))
+            settings = load_config(str(path))
+            if settings.telegram:
+                token_path = bot_token_lock_path(settings.telegram.bot_token)
+                if token_path not in token_locks:
+                    stack.enter_context(
+                        migration_token_lock(settings.telegram.bot_token)
+                    )
+                    token_locks.add(token_path)
+            if settings.instance_id:
+                entries = identity_entries(
+                    entries, path, settings.instance_id, str(target)
+                )
+            registry.upsert(entries, path, settings.instance_name)
+            source = Path(settings.database_path)
+            if source == target and not settings.instance_id:
+                raise SystemExit(
+                    "Legacy source and shared destination must be different files; use --database."
+                )
+            if not settings.instance_id and str(source) in sources and source.exists():
+                raise SystemExit(
+                    f"Multiple legacy configs share {source}; migrate separately only after verifying ownership."
+                )
+            sources.add(str(source))
+            conversations, messages = inspect_source(source, settings.instance_id)
+            print(
+                f"Config: {path}\nSource: {source}\nDestination: {target}\n"
+                f"Conversations: {conversations}; messages: {messages}"
+            )
+            plans.append((path, settings, source))
+        if args.dry_run:
+            print("Dry run: databases and configs were not changed.")
+            return
+        for path, settings, source in plans:
+            identity = import_instance(
+                str(target),
+                config_path=path,
+                source=source,
+                instance_id=settings.instance_id,
+                name=settings.instance_name,
+            )
+            data = load_raw_config(path)
+            data["instanceId"] = identity
+            data["databasePath"] = str(target)
+            data.pop("database_path", None)
+            write_raw_config(path, data)
+            name = settings.instance_name
+            entries = registry.upsert(entries, path, name)
+            registry.save(entries)
+            print(f"Migrated: {path} (instanceId: {identity})")
 
 
 def init_instance(args: argparse.Namespace) -> None:
@@ -183,19 +342,60 @@ def init_instance(args: argparse.Namespace) -> None:
     configure_telegram(args)
 
 
+@contextmanager
+def instance_runtime_lock(path: Path, *, dry_run: bool = False) -> Iterator[None]:
+    lock_path = instance_state(path)[0].with_suffix(".runtime.lock")
+    if dry_run and not lock_path.exists():
+        yield
+        return
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with lock_path.open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SystemExit(
+                f"Gateway is running: {path}. Stop it before migrating or starting again."
+            ) from exc
+        yield
+
+
 async def run_gateway(config_path: str | None) -> None:
-    config = load_config(config_path)
+    if not config_path:
+        raise SystemExit("A config file is required.")
+    registry = InstanceRegistry(expand_path(REGISTRY_PATH))
+    with ExitStack() as stack:
+        with registry.locked():
+            stack.enter_context(instance_runtime_lock(expand_path(config_path)))
+            config = load_config(config_path)
+            if config.instance_id:
+                identity_entries(
+                    registry.load(),
+                    expand_path(config_path),
+                    config.instance_id,
+                    config.database_path,
+                )
+        await _run_gateway(config, config_path)
+
+
+async def _run_gateway(config: GatewayConfig, config_path: str) -> None:
     logging.basicConfig(
         level=getattr(logging, config.log_level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if not config.telegram:
-        raise SystemExit("Telegram is not configured. Run `pi-gateway configure telegram` or set TELEGRAM_BOT_TOKEN.")
+        raise SystemExit(
+            "Telegram is not configured. Run `pi-gateway configure telegram` or set TELEGRAM_BOT_TOKEN."
+        )
     if not config.telegram.allowed_user_ids:
         raise SystemExit("Set telegram.allowedUserIds before starting the gateway.")
     acquire_bot_token_lock(config.telegram.bot_token)
 
-    db = GatewayDB(config.database_path)
+    db = GatewayDB(
+        config.database_path,
+        instance_id=config.instance_id,
+        config_path=config_path,
+        instance_name=config.instance_name,
+    )
     await db.init()
     sessions = PiSessionManager(config.pi, db)
     await sessions.start()
@@ -239,10 +439,15 @@ def load_raw_config(path: Path) -> dict[str, Any]:
 
 def write_raw_config(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        os.fchmod(f.fileno(), 0o600)
-        yaml.safe_dump(data, f, sort_keys=False)
+    fd, temporary = tempfile.mkstemp(prefix=".config-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _prompt(message: str, *, default: str | None = None) -> str:
@@ -251,7 +456,9 @@ def _prompt(message: str, *, default: str | None = None) -> str:
     return value or (default or "")
 
 
-def _prompt_int(message: str, *, default: int | None = None, required: bool = False) -> int | None:
+def _prompt_int(
+    message: str, *, default: int | None = None, required: bool = False
+) -> int | None:
     while True:
         value = _prompt(message, default=str(default) if default is not None else None)
         if not value and not required:
@@ -264,8 +471,15 @@ def _prompt_int(message: str, *, default: int | None = None, required: bool = Fa
 
 def parse_model(value: str) -> tuple[str, str]:
     provider, separator, model_id = value.partition("/")
-    if not separator or not provider or not model_id or any(char.isspace() for char in value):
-        raise ValueError("Model must be <provider>/<model-id> (see `pi --list-models`).")
+    if (
+        not separator
+        or not provider
+        or not model_id
+        or any(char.isspace() for char in value)
+    ):
+        raise ValueError(
+            "Model must be <provider>/<model-id> (see `pi --list-models`)."
+        )
     return provider, model_id
 
 
@@ -306,9 +520,13 @@ def select_model(pi: dict[str, Any], current: str | None) -> str | None:
     """Return a selected model, empty string to reset, or None to keep existing settings."""
     models = list_pi_models(pi)
     if models is None:
-        print("Pi model list unavailable; enter a model ID manually (see `pi --list-models`).")
+        print(
+            "Pi model list unavailable; enter a model ID manually (see `pi --list-models`)."
+        )
         while True:
-            model = _prompt("Model (provider/model-id; blank to keep current)", default=current)
+            model = _prompt(
+                "Model (provider/model-id; blank to keep current)", default=current
+            )
             if not model:
                 return None
             if model.lower() == "default":
@@ -323,17 +541,56 @@ def select_model(pi: dict[str, Any], current: str | None) -> str | None:
     from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
     from prompt_toolkit.validation import Validator
 
-    print(f"\nSearch {len(models)} Pi models (type to filter; Tab/arrow keys to select).")
-    print(f"Current: {current or 'Pi default'}. Enter on empty to keep it; type 'default' to use Pi default.")
+    print(
+        f"\nSearch {len(models)} Pi models (type to filter; Tab/arrow keys to select)."
+    )
+    print(
+        f"Current: {current or 'Pi default'}. Enter on empty to keep it; type 'default' to use Pi default."
+    )
     completer = FuzzyCompleter(WordCompleter(models, ignore_case=True))
     validator = Validator.from_callable(
         lambda text: not text or text.lower() == "default" or text in models,
         error_message="Select a listed model (Tab/arrow keys), or type 'default'.",
     )
-    model = prompt("Model: ", completer=completer, complete_while_typing=True, validator=validator).strip()
+    model = prompt(
+        "Model: ", completer=completer, complete_while_typing=True, validator=validator
+    ).strip()
     if model.lower() == "default":
         return ""
     return model or None
+
+
+def identity_entries(
+    entries: list[RegisteredInstance], path: Path, identity: str, database: str
+) -> list[RegisteredInstance]:
+    for entry in entries:
+        other = Path(entry["config"])
+        if (
+            other != path
+            and other.is_file()
+            and load_config(str(other)).instance_id == identity
+        ):
+            raise ValueError(f"Duplicate instanceId: already used by {other}")
+    if Path(database).exists():
+        conn = open_source(Path(database))
+        try:
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='instances'"
+            ).fetchone():
+                previous = conn.execute(
+                    "SELECT config_path FROM instances WHERE id=?", (identity,)
+                ).fetchone()
+                if (
+                    previous
+                    and previous[0] != str(path)
+                    and not Path(previous[0]).exists()
+                ):
+                    entries = [
+                        entry for entry in entries if entry["config"] != previous[0]
+                    ]
+        finally:
+            conn.close()
+    return entries
 
 
 def configure_telegram(args: argparse.Namespace) -> None:
@@ -341,12 +598,12 @@ def configure_telegram(args: argparse.Namespace) -> None:
     data = load_raw_config(path)
     interactive = sys.stdin.isatty()
 
-    default_db = (
-        "~/.local/share/pi-gateway/pi-gateway.sqlite3"
-        if path == expand_path(DEFAULT_CONFIG_PATH)
-        else default_database_path(str(path))
-    )
-    data.setdefault("databasePath", default_db)
+    if not path.exists():
+        data["instanceId"] = str(uuid.uuid4())
+        # Leave the path implicit so PI_GATEWAY_DB remains a usable override.
+    elif "instanceId" not in data:
+        # Reconfiguration must not silently lose a legacy database's mappings.
+        data.setdefault("databasePath", load_config(str(path)).database_path)
     data.setdefault("logLevel", "INFO")
 
     telegram = data.setdefault("telegram", {})
@@ -357,7 +614,11 @@ def configure_telegram(args: argparse.Namespace) -> None:
         print("Telegram setup")
         print("- Create a bot with @BotFather and paste its token here.")
         print("- Leave blank to read the token from TELEGRAM_BOT_TOKEN at runtime.")
-        token_default = existing_token if existing_token and str(existing_token).startswith("env:") else None
+        token_default = (
+            existing_token
+            if existing_token and str(existing_token).startswith("env:")
+            else None
+        )
         token = _prompt("Telegram bot token", default=token_default)
         telegram["botToken"] = token or existing_token or "env:TELEGRAM_BOT_TOKEN"
     else:
@@ -371,8 +632,14 @@ def configure_telegram(args: argparse.Namespace) -> None:
     elif interactive:
         print("\nSecurity setup")
         print("Only this Telegram user id will be allowed to use the bot.")
-        print("Tip: message @userinfobot or @RawDataBot on Telegram to find your numeric user id.")
-        allowed_user_id = _prompt_int("Allowed Telegram user id", default=existing_id, required=existing_id is None)
+        print(
+            "Tip: message @userinfobot or @RawDataBot on Telegram to find your numeric user id."
+        )
+        allowed_user_id = _prompt_int(
+            "Allowed Telegram user id",
+            default=existing_id,
+            required=existing_id is None,
+        )
     else:
         allowed_user_id = existing_id
 
@@ -382,7 +649,9 @@ def configure_telegram(args: argparse.Namespace) -> None:
         telegram.setdefault("allowedUserIds", [])
 
     telegram["allowGroups"] = bool(args.allow_groups)
-    telegram["includeUserInGroupSessionKey"] = bool(args.include_user_in_group_session_key)
+    telegram["includeUserInGroupSessionKey"] = bool(
+        args.include_user_in_group_session_key
+    )
 
     pi = data.setdefault("pi", {})
     pi.setdefault("command", "pi")
@@ -394,7 +663,11 @@ def configure_telegram(args: argparse.Namespace) -> None:
         current_cwd = str(Path.cwd())
         if existing_cwd != current_cwd:
             print(f"Existing configured Pi directory: {existing_cwd}")
-        pi["cwd"] = str(expand_path(_prompt("Directory where Pi should run sessions", default=current_cwd)))
+        pi["cwd"] = str(
+            expand_path(
+                _prompt("Directory where Pi should run sessions", default=current_cwd)
+            )
+        )
     else:
         pi["cwd"] = existing_cwd
     if args.pi_agent_dir:
@@ -402,7 +675,9 @@ def configure_telegram(args: argparse.Namespace) -> None:
 
     model = args.model
     if model == "":
-        raise ValueError("Model must be <provider>/<model-id> (see `pi --list-models`).")
+        raise ValueError(
+            "Model must be <provider>/<model-id> (see `pi --list-models`)."
+        )
     if model is None and interactive:
         current_model = (
             f"{pi['defaultProvider']}/{pi['defaultModel']}"
@@ -421,14 +696,19 @@ def configure_telegram(args: argparse.Namespace) -> None:
         raise ValueError(f"Thinking level must be one of: {', '.join(THINKING_LEVELS)}")
     if thinking is None and interactive:
         while True:
-            thinking = _prompt("Thinking level (blank for Pi default)", default=pi.get("defaultThinking"))
+            thinking = _prompt(
+                "Thinking level (blank for Pi default)",
+                default=pi.get("defaultThinking"),
+            )
             if not thinking or thinking.lower() in THINKING_LEVELS:
                 break
             print(f"Choose one of: {', '.join(THINKING_LEVELS)}")
     if thinking:
         thinking = thinking.lower()
         if thinking not in THINKING_LEVELS:
-            raise ValueError(f"Thinking level must be one of: {', '.join(THINKING_LEVELS)}")
+            raise ValueError(
+                f"Thinking level must be one of: {', '.join(THINKING_LEVELS)}"
+            )
         pi["defaultThinking"] = thinking
 
     pi.setdefault("idleTtlSeconds", 1800)
@@ -440,7 +720,9 @@ def configure_telegram(args: argparse.Namespace) -> None:
     name = args.name if args.name is not None else existing_name
     if args.name is None and interactive:
         while True:
-            candidate = _prompt("Gateway name (unique; blank for unnamed)", default=existing_name)
+            candidate = _prompt(
+                "Gateway name (unique; blank for unnamed)", default=existing_name
+            )
             if not candidate:
                 break
             try:
@@ -454,16 +736,43 @@ def configure_telegram(args: argparse.Namespace) -> None:
 
     registry = InstanceRegistry(expand_path(REGISTRY_PATH))
     with registry.locked():
-        entries = registry.upsert(registry.load(), path, name)
-        write_raw_config(path, data)
+        entries = registry.load()
+        if data.get("instanceId"):
+            settings_id = str(uuid.UUID(str(data["instanceId"])))
+            settings = load_config(str(path)) if path.exists() else None
+            database = (
+                settings.database_path
+                if settings
+                else os.environ.get("PI_GATEWAY_DB", shared_database_path())
+            )
+            entries = identity_entries(entries, path, settings_id, database)
+            entries = registry.upsert(entries, path, name)
+            with ExitStack() as stack:
+                # Register before writing: reject duplicate IDs/names without changing config.
+                conn = connect(str(expand_path(database)))
+                stack.callback(conn.close)
+                init_shared(conn)
+                with conn:
+                    register_instance(conn, settings_id, str(path), name, utc_now())
+                    data["instanceId"] = settings_id
+                    write_raw_config(path, data)
+        else:
+            entries = registry.upsert(entries, path, name)
+            write_raw_config(path, data)
         registry.save(entries)
     if path.name == "config.yaml" and path.parent.name == ".pi-gateway":
-        print("Keep .pi-gateway/ out of version control: it may contain secrets and session metadata.")
+        print(
+            "Keep .pi-gateway/ out of version control: it may contain secrets and session metadata."
+        )
     print(f"\nWrote config: {path}")
     if str(telegram.get("botToken", "")).startswith("env:"):
-        print(f"Set {str(telegram['botToken'])[4:]} in the daemon environment for this bot.")
+        print(
+            f"Set {str(telegram['botToken'])[4:]} in the daemon environment for this bot."
+        )
     if allowed_user_id is None:
-        print("WARNING: no allowed Telegram user id was configured. Set one before exposing the bot.")
+        print(
+            "WARNING: no allowed Telegram user id was configured. Set one before exposing the bot."
+        )
     else:
         print(f"Only Telegram user id {allowed_user_id} is allowed.")
 
@@ -505,10 +814,14 @@ def start_background(args: argparse.Namespace) -> None:
     # Configure/remove hold this lock too: do not spawn from a config being deleted.
     with registry.locked():
         if not config.is_file():
-            raise SystemExit(f"Config not found: {config}. Run `pi-gateway init` first.")
+            raise SystemExit(
+                f"Config not found: {config}. Run `pi-gateway init` first."
+            )
         settings = load_config(str(config))
         if not settings.telegram or not settings.telegram.allowed_user_ids:
-            raise SystemExit("Configure a Telegram token and allowed user ID before starting.")
+            raise SystemExit(
+                "Configure a Telegram token and allowed user ID before starting."
+            )
         pid_file, log_file = instance_state(config)
         existing = read_pid(pid_file)
         if existing and is_process_running(existing):
@@ -520,7 +833,9 @@ def start_background(args: argparse.Namespace) -> None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         cmd = [sys.argv[0], "run", "--config", str(config)]
         with log_file.open("ab", buffering=0) as out:
-            out.write(f"\n--- starting pi-gateway at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode())
+            out.write(
+                f"\n--- starting pi-gateway at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode()
+            )
             process = subprocess.Popen(
                 cmd,
                 stdout=out,
@@ -598,18 +913,30 @@ def package_version() -> str:
 
 def add_selection_options(parser: argparse.ArgumentParser) -> None:
     """Allow -c/-i after a command without erasing values given before it."""
-    parser.add_argument("-c", "--config", default=argparse.SUPPRESS, help="Path to config YAML")
-    parser.add_argument("-i", "--instance", default=argparse.SUPPRESS, help="Gateway name or directory")
+    parser.add_argument(
+        "-c", "--config", default=argparse.SUPPRESS, help="Path to config YAML"
+    )
+    parser.add_argument(
+        "-i", "--instance", default=argparse.SUPPRESS, help="Gateway name or directory"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pi-gateway")
-    parser.add_argument("--version", action="version", version=f"pi-gateway {package_version()}")
-    parser.add_argument("-c", "--config", help="Path to config YAML (overrides local instance)")
-    parser.add_argument("-i", "--instance", help="Manage a gateway by name or initialized bot directory")
+    parser.add_argument(
+        "--version", action="version", version=f"pi-gateway {package_version()}"
+    )
+    parser.add_argument(
+        "-c", "--config", help="Path to config YAML (overrides local instance)"
+    )
+    parser.add_argument(
+        "-i", "--instance", help="Manage a gateway by name or initialized bot directory"
+    )
     sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="Run the Telegram gateway daemon in the foreground")
+    run = sub.add_parser(
+        "run", help="Run the Telegram gateway daemon in the foreground"
+    )
     add_selection_options(run)
 
     start = sub.add_parser("start", help="Start pi-gateway in the background")
@@ -617,58 +944,128 @@ def build_parser() -> argparse.ArgumentParser:
 
     stop = sub.add_parser("stop", help="Stop a background pi-gateway process")
     add_selection_options(stop)
-    stop.add_argument("--timeout", type=float, default=10, help="Seconds to wait for graceful shutdown")
+    stop.add_argument(
+        "--timeout",
+        type=float,
+        default=10,
+        help="Seconds to wait for graceful shutdown",
+    )
 
-    remove = sub.add_parser("remove", help="Delete a gateway config and unregister it (preserves history)")
+    remove = sub.add_parser(
+        "remove", help="Delete a gateway config and unregister it (preserves history)"
+    )
     add_selection_options(remove)
-    remove.add_argument("target", nargs="?", help="Registered gateway name; or use -c/-i")
-    remove.add_argument("--dry-run", action="store_true", help="Show what would be removed without changing anything")
-    remove.add_argument("--stop", action="store_true", help="Stop a running background gateway before removal")
-    remove.add_argument("--timeout", type=float, default=10, help="Seconds to wait when using --stop")
-    remove.add_argument("--yes", action="store_true", help="Skip interactive confirmation (for automation)")
+    remove.add_argument(
+        "target", nargs="?", help="Registered gateway name; or use -c/-i"
+    )
+    remove.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be removed without changing anything",
+    )
+    remove.add_argument(
+        "--stop",
+        action="store_true",
+        help="Stop a running background gateway before removal",
+    )
+    remove.add_argument(
+        "--timeout", type=float, default=10, help="Seconds to wait when using --stop"
+    )
+    remove.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip interactive confirmation (for automation)",
+    )
 
     status = sub.add_parser("status", help="Show background process status")
     add_selection_options(status)
 
     logs = sub.add_parser("logs", help="Show pi-gateway log file")
     add_selection_options(logs)
-    logs.add_argument("-n", "--lines", type=int, default=80, help="Number of lines to show")
+    logs.add_argument(
+        "-n", "--lines", type=int, default=80, help="Number of lines to show"
+    )
     logs.add_argument("-f", "--follow", action="store_true", help="Follow log output")
 
     configure = sub.add_parser("configure", help="Configure gateway integrations")
     configure.set_defaults(_help_parser=configure)
     configure_sub = configure.add_subparsers(dest="configure_command")
-    telegram = configure_sub.add_parser("telegram", help="Create/update Telegram gateway config")
+    telegram = configure_sub.add_parser(
+        "telegram", help="Create/update Telegram gateway config"
+    )
     telegram.set_defaults(_help_parser=telegram)
     add_selection_options(telegram)
-    telegram.add_argument("--bot-token", help="Telegram bot token. Omit to use env:TELEGRAM_BOT_TOKEN")
-    telegram.add_argument("--allowed-user-id", type=int, help="Only accept messages from this Telegram user id")
-    telegram.add_argument("--pi-cwd", help="Working directory where Pi should run sessions")
-    telegram.add_argument("--pi-agent-dir", help="Optional isolated Pi agent directory for global skills and credentials")
-    telegram.add_argument("--name", help="Unique gateway name for listing and remote management")
-    telegram.add_argument("--model", help="Pi startup model as provider/model-id (omit to use Pi's default)")
-    telegram.add_argument("--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}")
-    telegram.add_argument("--allow-groups", action="store_true", help="Allow the bot in group chats")
+    telegram.add_argument(
+        "--bot-token", help="Telegram bot token. Omit to use env:TELEGRAM_BOT_TOKEN"
+    )
+    telegram.add_argument(
+        "--allowed-user-id",
+        type=int,
+        help="Only accept messages from this Telegram user id",
+    )
+    telegram.add_argument(
+        "--pi-cwd", help="Working directory where Pi should run sessions"
+    )
+    telegram.add_argument(
+        "--pi-agent-dir",
+        help="Optional isolated Pi agent directory for global skills and credentials",
+    )
+    telegram.add_argument(
+        "--name", help="Unique gateway name for listing and remote management"
+    )
+    telegram.add_argument(
+        "--model",
+        help="Pi startup model as provider/model-id (omit to use Pi's default)",
+    )
+    telegram.add_argument(
+        "--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}"
+    )
+    telegram.add_argument(
+        "--allow-groups", action="store_true", help="Allow the bot in group chats"
+    )
     telegram.add_argument(
         "--include-user-in-group-session-key",
         action="store_true",
         help="Separate group sessions by sender user id as well as chat/thread",
     )
 
+    migrate = sub.add_parser(
+        "migrate-db",
+        help="Consolidate stopped instances into the shared SQLite database",
+    )
+    add_selection_options(migrate)
+    migrate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview imports without changing databases/configs",
+    )
+    migrate.add_argument(
+        "--database",
+        help="Destination database (default: ~/.local/state/pi-gateway/gateway.sqlite3)",
+    )
+
     config_path = sub.add_parser("config-path", help="Print the effective config path")
     add_selection_options(config_path)
     instances = sub.add_parser("instances", help="List registered gateway instances")
     instances_sub = instances.add_subparsers(dest="instances_command")
-    forget = instances_sub.add_parser("forget", help="Remove a stopped gateway from the registry")
-    forget.add_argument("name", help="Gateway name to unregister (does not delete files)")
+    forget = instances_sub.add_parser(
+        "forget", help="Remove a stopped gateway from the registry"
+    )
+    forget.add_argument(
+        "name", help="Gateway name to unregister (does not delete files)"
+    )
     init = sub.add_parser("init", help="Initialize a bot in the current directory")
     init.add_argument("--bot-token")
     init.add_argument("--allowed-user-id", type=int)
     init.add_argument("--pi-cwd")
     init.add_argument("--pi-agent-dir")
-    init.add_argument("--name", help="Unique gateway name for listing and remote management")
+    init.add_argument(
+        "--name", help="Unique gateway name for listing and remote management"
+    )
     init.add_argument("--model", help="Pi startup model as provider/model-id")
-    init.add_argument("--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}")
+    init.add_argument(
+        "--thinking", help=f"Pi startup thinking level: {', '.join(THINKING_LEVELS)}"
+    )
     init.add_argument("--allow-groups", action="store_true")
     init.add_argument("--include-user-in-group-session-key", action="store_true")
     return parser
@@ -680,7 +1077,9 @@ def main() -> None:
     if args.command == "run":
         config = resolve_config(args)
         if not config.is_file():
-            raise SystemExit(f"Config not found: {config}. Run `pi-gateway init` first.")
+            raise SystemExit(
+                f"Config not found: {config}. Run `pi-gateway init` first."
+            )
         asyncio.run(run_gateway(str(config)))
     elif args.command == "start":
         start_background(args)
@@ -694,6 +1093,8 @@ def main() -> None:
         show_logs(args)
     elif args.command == "configure" and args.configure_command == "telegram":
         configure_telegram(args)
+    elif args.command == "migrate-db":
+        migrate_databases(args)
     elif args.command == "init":
         init_instance(args)
     elif args.command == "instances":

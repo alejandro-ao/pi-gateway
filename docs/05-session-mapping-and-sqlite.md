@@ -30,29 +30,46 @@ telegram:<chat_id>:<thread_id?>:<user_id?>
 
 Private chats include user id. Group behavior depends on config.
 
-The key must be stable because it is the primary lookup for continuing a conversation.
+The key must be stable because it is the primary lookup for continuing a conversation. In shared storage its namespace is the config's stable `instanceId`: the same Telegram identity can reach different bots without sharing Pi context.
 
 ## Database Schema
 
-Created in `GatewayDB.init()` in `pi_gateway/db.py`.
+Shared schema created by `init_shared()` in `pi_gateway/storage.py`, versioned through `PRAGMA user_version` (currently 1). New instances default to `~/.local/state/pi-gateway/gateway.sqlite3`. Every connection enables foreign keys and a five-second busy timeout; WAL permits concurrent readers. Journal-mode setup additionally retries immediate SQLite busy/locked failures with a five-second deadline (some SQLite versions bypass the busy handler during concurrent WAL initialization). Unrelated errors propagate without retry. Atomic upserts avoid competing connections creating duplicate conversations. Future schema versions are refused by older clients.
+
+### instances
+
+```sql
+CREATE TABLE instances (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  config_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived_at TEXT
+);
+```
+
+Partial unique indexes enforce active names/config paths while allowing archived records to retain history. UUIDs are persisted in config, independent of name/path; a moved config can update its metadata when the original path no longer exists. Duplicate IDs at live config paths are refused. `InstanceRegistry` remains the JSON discovery index, including legacy/unmigrated configs and configs whose database paths are overridden. Tokens are never stored in SQLite.
 
 ### conversations
 
 ```sql
 CREATE TABLE IF NOT EXISTS conversations (
   id INTEGER PRIMARY KEY,
+  instance_id TEXT NOT NULL REFERENCES instances(id),
   platform TEXT NOT NULL,
   chat_id TEXT NOT NULL,
   thread_id TEXT,
   user_id TEXT,
-  gateway_session_key TEXT UNIQUE NOT NULL,
+  gateway_session_key TEXT NOT NULL,
   pi_session_id TEXT,
   pi_session_file TEXT,
   pi_session_name TEXT,
   cwd TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  last_message_at TEXT
+  last_message_at TEXT,
+  UNIQUE(instance_id, gateway_session_key)
 );
 ```
 
@@ -79,7 +96,26 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 ```
 
-This is an audit log of inbound/outbound gateway messages. It is not used to reconstruct Pi context.
+This is an audit log of inbound/outbound gateway messages. It is not used to reconstruct Pi context. Messages inherit instance ownership through the conversation foreign key. Indexes cover `(instance_id, platform, user_id, updated_at DESC)`, `(instance_id, platform, updated_at DESC)`, and `(conversation_id, id)` for messages.
+
+### database_imports
+
+```sql
+CREATE TABLE database_imports (
+  instance_id TEXT NOT NULL REFERENCES instances(id),
+  source_path TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  PRIMARY KEY(instance_id, source_path)
+);
+```
+
+An import marker commits in the same transaction as the imported rows. Repeating an interrupted migration reuses the destination instance ID and skips already imported sources. Config replacement follows the database commit and is atomic; batch imports commit separately per instance. Never restart affected legacy bots between a failed migration and its retry.
+
+### Legacy compatibility and migration
+
+Configs without `instanceId` keep the original schema and previous database path defaults. A legacy client cannot open a scoped shared database, and an identified client refuses an unscoped legacy schema. Startup never rewrites populated legacy databases.
+
+`migrate-db` preflights all selected sources, refuses running background PIDs, and takes runtime locks that also cover foreground/systemd gateways. It also checks existing Telegram token locks to detect older gateways when their token is available in the migration environment; always stop pre-upgrade foreground/systemd processes explicitly. The registry lock serializes configure/start/remove/migration. Each source is backed up using SQLite's backup API; the snapshot is imported read-only, preserving original databases and Pi session-file paths. Conversation/message IDs are remapped; collisions in a populated destination fail instead of overwriting data. Instance removal/forget archives ownership metadata without cascading deletion.
 
 ## First Message Flow
 
@@ -119,7 +155,7 @@ The `pi_session_file` is preferred over only storing the session UUID because it
 
 ## Switching Sessions
 
-`/sessions` lists recent conversations for the same Telegram user.
+`/sessions` lists recent conversations for the same Telegram user **within the current instance**. All lookups/updates, including by numeric conversation ID, apply `instance_id`. `/switch` re-reads both source and target under this scope; a foreign-instance ID cannot expose or change a session.
 
 `/switch <id>` copies the source conversation's Pi session fields onto the current conversation:
 
