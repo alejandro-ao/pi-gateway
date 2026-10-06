@@ -57,7 +57,7 @@ mkdir -p ~/bots/my-bot && cd ~/bots/my-bot
 pi-gateway init --name research
 ```
 
-`init` prompts for a gateway name and Telegram setup, and writes `.pi-gateway/config.yaml`. The name is a gateway identifier, not a Pi session name or Telegram username. `--name research` also works non-interactively; names must be unique per OS user and use letters, digits, or hyphens (max 64 characters). Existing unnamed bots keep working and appear by path until named. The bot's SQLite database, PID and log also live under `.pi-gateway/`; **add `.pi-gateway/` to your project's `.gitignore`** (config may contain a bot token). `pi-gateway configure telegram` creates/updates the local config as well. Commands in this directory automatically select it; `-c <config-path>` always overrides discovery. Existing `~/.config/pi-gateway/config.yaml` installations remain usable when no local instance exists.
+`init` prompts for a gateway name and Telegram setup, and writes `.pi-gateway/config.yaml`. The name is a gateway identifier, not a Pi session name or Telegram username. `--name research` also works non-interactively; names must be unique per OS user and use letters, digits, or hyphens (max 64 characters). Existing unnamed bots keep working and appear by path until named. The bot's PID and log also live under `.pi-gateway/`; new instances share the OS user's SQLite database at `~/.local/state/pi-gateway/gateway.sqlite3`, with conversations isolated by a stable `instanceId` UUID;  **add `.pi-gateway/` to your project's `.gitignore`** (config may contain a bot token). `pi-gateway configure telegram` creates/updates the local config as well. Commands in this directory automatically select it; `-c <config-path>` always overrides discovery. Existing `~/.config/pi-gateway/config.yaml` installations remain usable when no local instance exists.
 
 Set a distinct bot token and allowed user ID for each instance. Each bot needs its own token. For separate *global* Pi skills/auth, use `pi-gateway init --pi-agent-dir /path/to/agent-dir` and authenticate Pi in that agent directory; otherwise Pi uses the OS user's shared agent directory. Project-local skills follow the configured Pi working directory. For an interactive update:
 
@@ -156,13 +156,42 @@ pi-gateway remove research --stop --yes  # Stop a background bot, then remove; f
 pi-gateway remove -c /absolute/path/to/bot.yaml --yes
 ```
 
-`remove` never deletes SQLite databases, logs, directories, or Pi session files. `--stop` handles bots started with `pi-gateway start`; stop foreground or systemd-managed bots through their supervisor before removing them. If a bot fails to stop within 10 seconds, its config is kept. After removal, commands run from its former directory may fall back to the legacy global config, so target other bots by name or `-c`. Nonstandard `-c` configs use separate PID, log, and default SQLite paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` values in YAML are respected; choose different ones per bot. Moving a config changes its derived paths, so move its database or set `databasePath` explicitly if you need its history. If you previously ran an explicit `-c` config without `databasePath`, set `databasePath` to the old `pi-gateway.sqlite3` file before upgrading to retain its conversation mappings.
+`remove` never deletes SQLite databases, logs, directories, or Pi session files. `--stop` handles bots started with `pi-gateway start`; stop foreground or systemd-managed bots through their supervisor before removing them. If a bot fails to stop within 10 seconds, its config is kept. After removal, commands run from its former directory may fall back to the legacy global config, so target other bots by name or `-c`. Nonstandard `-c` configs use separate PID and log paths derived from their absolute config paths, even when they live in the same directory. Set distinct Telegram tokens. Explicit `databasePath` (or `PI_GATEWAY_DB` when YAML omits it) remains supported. Identified instances can safely share a database; pre-upgrade instances without `instanceId` must migrate before sharing. Renaming or moving an identified config preserves its SQLite ownership; after moving, run `configure telegram` at the new path to update discovery. Copying an existing config is not a new instance: duplicate IDs are rejected; use `init` to create another bot.
 
 Development checkout:
 
 ```bash
 uv run pi-gateway run
 ```
+
+## Shared database and upgrading existing bots
+
+New instances use **one SQLite database per OS user**, regardless of their Pi working directories:
+
+```text
+~/.local/state/pi-gateway/gateway.sqlite3
+```
+
+Each config contains a generated `instanceId`. Conversation keys, `/sessions`, `/switch`, and all database writes are scoped to that instance. Pi history still lives in Pi JSONL files; configs/tokens, PID files, and logs remain separate. The JSON registry remains a config-discovery index; SQLite stores instance ownership metadata. `remove`/`instances forget` archive the SQLite instance record, preserving its conversations and audit messages.
+
+Existing configs without `instanceId` continue using their previous database paths and schema. Reconfiguring them does not silently switch databases. To consolidate:
+
+```bash
+# Stop every affected gateway first, including systemd/foreground processes.
+pi-gateway migrate-db --dry-run
+pi-gateway migrate-db
+# Or migrate a selected config, including an unregistered one:
+pi-gateway migrate-db -c /absolute/path/to/bot.yaml --dry-run
+pi-gateway migrate-db -c /absolute/path/to/bot.yaml
+# Optional destination override:
+pi-gateway migrate-db --database /absolute/path/to/gateway.sqlite3
+```
+
+Without `-c`/`-i`, migration processes all registered configs. Missing configs or running gateways are refused. A dry run previews counts without changing databases/configs. Migration backs up each source beside the original (`<database>.backup-<uuid>`), imports conversations and audit messages with remapped IDs, and atomically updates configs only after each successful import. Original databases and Pi session paths are unchanged. Completed imports are recorded: rerun the same command after interruption, **before restarting any affected bots**. Imports are transactional per instance, not across the whole batch; an earlier instance may already be migrated if a later import fails. Restart bots after success and verify `/status` and `/sessions`. Migrated conversation IDs can differ; use the new `/sessions` IDs for `/switch`.
+
+If multiple legacy configs already point at the same database, batch migration refuses ambiguous ownership. Review that database before migrating configs separately. For old manually configured databases at nonstandard locations, set their actual `databasePath` before migrating. Manual configs without an ID retain legacy behavior; `migrate-db -c ...` assigns an ID even when no database exists yet.
+
+Use SQLite on a local filesystem, not a network share. Each process has its own connection; WAL allows concurrent readers, writes remain serialized, and lock contention waits up to five seconds. New database/backup files are private to the OS user (mode `0600`). This is logical isolation, not a sandbox between processes running as the same user.
 
 ## Telegram commands
 
@@ -193,7 +222,7 @@ Gateway key:
 telegram:<chat_id>:<thread_id?>:<user_id?>
 ```
 
-SQLite stores that key plus Pi's `sessionId` and `sessionFile`. On restart the gateway resumes with:
+SQLite stores `(instanceId, key)` plus Pi's `sessionId` and `sessionFile`. On restart the gateway resumes with:
 
 ```bash
 pi --mode rpc --session <stored-session-file>
