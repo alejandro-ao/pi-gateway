@@ -191,7 +191,7 @@ Without `-c`/`-i`, migration processes all registered configs. Missing configs o
 
 If multiple legacy configs already point at the same database, batch migration refuses ambiguous ownership. Review that database before migrating configs separately. For old manually configured databases at nonstandard locations, set their actual `databasePath` before migrating. Manual configs without an ID retain legacy behavior; `migrate-db -c ...` assigns an ID even when no database exists yet.
 
-Use SQLite on a local filesystem, not a network share. Each process has its own connection; WAL allows concurrent readers, writes remain serialized, and lock contention waits up to five seconds. New database/backup files are private to the OS user (mode `0600`). This is logical isolation, not a sandbox between processes running as the same user.
+Use SQLite on a local filesystem, not a network share. Each process has its own connection; WAL allows concurrent readers, writes remain serialized, and lock contention waits up to five seconds. WAL initialization also retries immediate SQLite busy/locked errors with a five-second retry deadline. New database/backup files are private to the OS user (mode `0600`). This is logical isolation, not a sandbox between processes running as the same user.
 
 ## Telegram commands
 

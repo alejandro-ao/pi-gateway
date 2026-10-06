@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -27,6 +28,25 @@ def connect(path: str) -> sqlite3.Connection:
     return conn
 
 
+def enable_wal(conn: sqlite3.Connection) -> None:
+    # Journal-mode changes can return SQLITE_BUSY immediately (without invoking
+    # the busy handler) when another process initializes the same empty file.
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+            remaining = deadline - time.monotonic()
+            if (
+                code not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                or remaining <= 0
+            ):
+                raise
+            time.sleep(min(0.05, remaining))
+
+
 def init_shared(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
@@ -38,7 +58,7 @@ def init_shared(conn: sqlite3.Connection) -> None:
         raise ValueError(
             "Legacy database: run `pi-gateway migrate-db` before using instanceId."
         )
-    conn.execute("PRAGMA journal_mode=WAL")
+    enable_wal(conn)
     # BEGIN in the script makes schema creation/versioning atomic across processes.
     conn.executescript("""
         BEGIN IMMEDIATE;

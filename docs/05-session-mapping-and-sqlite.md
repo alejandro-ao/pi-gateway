@@ -34,7 +34,7 @@ The key must be stable because it is the primary lookup for continuing a convers
 
 ## Database Schema
 
-Shared schema created by `init_shared()` in `pi_gateway/storage.py`, versioned through `PRAGMA user_version` (currently 1). New instances default to `~/.local/state/pi-gateway/gateway.sqlite3`. Every connection enables foreign keys and a five-second busy timeout; WAL permits concurrent readers. Atomic upserts avoid competing connections creating duplicate conversations. Future schema versions are refused by older clients.
+Shared schema created by `init_shared()` in `pi_gateway/storage.py`, versioned through `PRAGMA user_version` (currently 1). New instances default to `~/.local/state/pi-gateway/gateway.sqlite3`. Every connection enables foreign keys and a five-second busy timeout; WAL permits concurrent readers. Journal-mode setup additionally retries immediate SQLite busy/locked failures with a five-second deadline (some SQLite versions bypass the busy handler during concurrent WAL initialization). Unrelated errors propagate without retry. Atomic upserts avoid competing connections creating duplicate conversations. Future schema versions are refused by older clients.
 
 ### instances
 
